@@ -1,0 +1,63 @@
+{
+    "name": "kinetis/queue-rabbitmq",
+    "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "amphp/amp": "^3.1",
+        "kinetis/kinetis": "dev-main",
+        "kinetis/queue": "dev-main",
+        "kinetis/persistence": "dev-main",
+        "kinetis/cache-redis": "dev-main",
+        "thesis/amqp": "^1.0",
+        "thesis/time-span": "^0.2"
+    },
+    "require-dev": {
+        "infection/infection": "^0.34.2",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^11.0",
+        "vimeo/psalm": "^6.16"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\QueueRabbitMq\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\QueueRabbitMq\\Tests\\": "tests/"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../kinetis"
+        },
+        {
+            "type": "path",
+            "url": "../queue"
+        },
+        {
+            "type": "path",
+            "url": "../persistence"
+        },
+        {
+            "type": "path",
+            "url": "../cache-redis"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

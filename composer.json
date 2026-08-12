@@ -10,11 +10,11 @@
     ],
     "require": {
         "php": "^8.4",
-        "amphp/amp": "^3.1",
         "kinetis/kinetis": "dev-main",
         "kinetis/queue": "dev-main",
         "kinetis/persistence": "dev-main",
         "kinetis/cache-redis": "dev-main",
+        "amphp/amp": "^3.1",
         "thesis/amqp": "^1.0",
         "thesis/time-span": "^0.2"
     },

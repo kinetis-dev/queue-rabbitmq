@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9dce3d24f607f632891e820235827ed0",
+    "content-hash": "e84bb605557ff966215915be299ca458",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1287,14 +1287,12 @@
             "dist": {
                 "type": "path",
                 "url": "../kinetis",
-                "reference": "dcbbe485dd45f1c76e3a2fe9a6746eb4e822cac8"
+                "reference": "9937ec73fa72ff428e67251059e27ba748fa55a5"
             },
             "require": {
-                "nikic/php-parser": "^5.0",
                 "nyholm/psr7": "^1.8",
                 "nyholm/psr7-server": "^1.1",
                 "php": "^8.4",
-                "phpstan/phpstan": "^2.2",
                 "psr/container": "^2.0",
                 "psr/event-dispatcher": "^1.0",
                 "psr/http-message": "^2.0",
@@ -1306,6 +1304,8 @@
             },
             "require-dev": {
                 "infection/infection": "^0.34.2",
+                "nikic/php-parser": "^5.0",
+                "phpstan/phpstan": "^2.2",
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },

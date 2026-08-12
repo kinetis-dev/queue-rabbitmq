@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "kinetis/queue": "dev-main",
         "kinetis/persistence": "dev-main",
         "kinetis/cache-redis": "dev-main",
@@ -37,7 +37,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         },
         {
             "type": "path",

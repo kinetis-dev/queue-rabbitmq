@@ -65,7 +65,7 @@ affect two other things:
 composer require kinetis/queue-rabbitmq
 ```
 
-Requires PHP 8.4+, `kinetis/kinetis`, and `kinetis/queue`. Full
+Requires PHP 8.4+, `kinetis/framework`, and `kinetis/queue`. Full
 documentation:
 [docs.kinetis.dev/queue-rabbitmq.html](https://docs.kinetis.dev/queue-rabbitmq.html).
 

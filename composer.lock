@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4b1bd82533f61e0fed613c0d26d04ffd",
+    "content-hash": "4ebb3e443e31fd89ce65147c34333139",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1242,9 +1242,10 @@
             "dist": {
                 "type": "path",
                 "url": "../cache-redis",
-                "reference": "97a35c52aa32a800696859d97b218c1575c82e99"
+                "reference": "0b8b487283be8a1c192fb6cd387c7b7d9e710a77"
             },
             "require": {
+                "amphp/amp": "^3.1",
                 "amphp/redis": "^2.0",
                 "amphp/serialization": "^1.0",
                 "amphp/socket": "^2.3",
@@ -1287,9 +1288,10 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "c22a002f7f06f637bb92ba6488d78eb91cd1c33a"
+                "reference": "309d357728b120fd03c6368a8c21cc30854a1f74"
             },
             "require": {
+                "ext-fileinfo": "*",
                 "nyholm/psr7": "^1.8",
                 "nyholm/psr7-server": "^1.1",
                 "php": "^8.4",

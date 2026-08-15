@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/v/kinetis/queue-rabbitmq" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/v/kinetis/queue-rabbitmq?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/dt/kinetis/queue-rabbitmq" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/php-v/kinetis/queue-rabbitmq" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/l/kinetis/queue-rabbitmq" alt="License"></a>

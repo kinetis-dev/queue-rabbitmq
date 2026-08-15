@@ -8,6 +8,14 @@
   <strong>A Fiber-native, non-blocking RabbitMQ backend for kinetis/queue's <code>QueueInterface</code></strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/v/kinetis/queue-rabbitmq" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/dt/kinetis/queue-rabbitmq" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/php-v/kinetis/queue-rabbitmq" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/queue-rabbitmq"><img src="https://img.shields.io/packagist/l/kinetis/queue-rabbitmq" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 Adds RabbitMQ as a queue backend. `push()`/`pop()`/`ack()`/`release()`/`fail()`

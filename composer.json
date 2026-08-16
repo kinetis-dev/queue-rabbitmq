@@ -34,6 +34,9 @@
             "Kinetis\\QueueRabbitMq\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "kinetis": {}
+    },
     "repositories": [
         {
             "type": "path",

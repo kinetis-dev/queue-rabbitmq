@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4ebb3e443e31fd89ce65147c34333139",
+    "content-hash": "a8e2bd9db371751ed9fac3fddb2f3afc",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1242,7 +1242,7 @@
             "dist": {
                 "type": "path",
                 "url": "../cache-redis",
-                "reference": "0b8b487283be8a1c192fb6cd387c7b7d9e710a77"
+                "reference": "7220604af80245a011077c90b83b4daffccb0055"
             },
             "require": {
                 "amphp/amp": "^3.1",
@@ -1259,6 +1259,9 @@
                 "vimeo/psalm": "^6.16"
             },
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\SimpleCache\\": "src/"
@@ -1288,7 +1291,7 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "309d357728b120fd03c6368a8c21cc30854a1f74"
+                "reference": "0de7f8938cf33a41a31bb8d347a7a95cfe8fd535"
             },
             "require": {
                 "ext-fileinfo": "*",
@@ -1311,10 +1314,16 @@
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },
+            "suggest": {
+                "ext-event": "An OS-native Revolt event-loop backend (epoll), removing select()'s 1024 fd-number ceiling. Needed when the loop watches real sockets (native Postgres driver, Redis, HTTP client) in a FrankenPHP worker process; a MySQL-only deployment does not need it. ext-uv/ext-ev work equally."
+            },
             "bin": [
                 "bin/kinetis"
             ],
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\": "src/"
@@ -1347,14 +1356,12 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "a13d00c96f5b60a971bca62479606aadd5c381b4"
+                "reference": "211618fd0a388b935cc726d8a363b415c8b761cb"
             },
             "require": {
-                "amphp/mysql": "^3.1",
-                "amphp/postgres": "^2.2",
-                "amphp/sql": "^2",
                 "kinetis/framework": "dev-main",
-                "php": "^8.4"
+                "php": "^8.4",
+                "revolt/event-loop": "^1.0"
             },
             "require-dev": {
                 "infection/infection": "^0.34.2",
@@ -1364,9 +1371,17 @@
                 "vimeo/psalm": "^6.16"
             },
             "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
+                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
+                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto."
             },
             "type": "library",
+            "extra": {
+                "kinetis": {
+                    "bootstrap": "Kinetis\\Persistence\\PackageBootstrap"
+                }
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\Persistence\\": "src/"
@@ -1385,7 +1400,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "Request-scoped SQL transaction safety net and connection-pool factory for Kinetis — MySQL and Postgres via amphp/mysql and amphp/postgres.",
+            "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "transport-options": {
                 "relative": true
             }
@@ -1396,11 +1411,10 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "fa94cef4803443a4acc1cc800c4ec4945e70ca4b"
+                "reference": "759b963c42fb69937f359ee3bcb9d578dbd35e1a"
             },
             "require": {
                 "amphp/redis": "^2.0",
-                "amphp/sql": "^2",
                 "kinetis/cache-redis": "dev-main",
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
@@ -1414,10 +1428,13 @@
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },
-            "bin": [
-                "bin/queue"
-            ],
             "type": "library",
+            "extra": {
+                "kinetis": {
+                    "scan": "Kinetis\\Queue\\Console\\",
+                    "bootstrap": "Kinetis\\Queue\\PackageBootstrap"
+                }
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\Queue\\": "src/"

@@ -31,12 +31,23 @@ $queue = new RabbitMqQueue(RabbitMqClientFactory::fromConfig($config));
 $queue->push(new SendWelcomeEmail($email, $name), queue: 'default');
 ```
 
-## Configuring
+## Configuration
 
 ```
 QUEUE_CONNECTION=rabbitmq
 QUEUE_RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 ```
+
+| Key | Default | Purpose |
+|---|---|---|
+| `QUEUE_RABBITMQ_URL` | *(required)* | `amqp://` URI. |
+| `QUEUE_RABBITMQ_QUEUE_PREFIX` | — | Prepended to every queue name. |
+
+Both are scoped — `QUEUE_RABBITMQ_URL` + `events` →
+`QUEUE_EVENTS_RABBITMQ_URL`. `kinetis/queue`'s own keys
+(`QUEUE_CONNECTION`, `QUEUE_MAX_ATTEMPTS`, ...) are documented in that
+package; full reference:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
 
 A queue name resolves directly to a RabbitMQ queue of that name, declared
 durable the first time anything touches it — nothing to create ahead of
@@ -53,7 +64,7 @@ listening at all times, and `concurrently()` waits for everything pending
 in the process to settle before it returns, which never happens while
 that connection stays open.
 
-This never affects the `vendor/bin/queue work` loop itself. It does
+This never affects the `kinetis queue:work` loop itself. It does
 affect two other things:
 
 - **A job's own `handle()`** reaching for `concurrently()` for its own

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\QueueRabbitMq;
 
+use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\JobSerializer;
 use Kinetis\Queue\QueueInterface;
@@ -15,6 +16,7 @@ use Thesis\Amqp\DeliveryMode;
 use Thesis\Amqp\Message;
 use Thesis\Time\TimeSpan;
 use function Amp\delay;
+use Throwable;
 
 /**
  * A hard, permanent limitation, not a someday: once any method on this
@@ -87,6 +89,8 @@ final class RabbitMqQueue implements QueueInterface
 
     private const string MAX_ATTEMPTS_HEADER = 'maxAttempts';
 
+    private const string METADATA_HEADER = 'metadata';
+
     private const float POLL_INTERVAL_SECONDS = 1.0;
 
     private ?Channel $channel = null;
@@ -102,30 +106,44 @@ final class RabbitMqQueue implements QueueInterface
     #[\Override]
     public function push(Job $job, int $delaySeconds = 0, string $queue = 'default', ?int $maxAttempts = null): void
     {
-        $realQueue = $this->queueNamePrefix . $queue;
-        $this->ensureDeclared($realQueue);
+        $telemetry = Telemetry::global();
+        $telemetryToken = $telemetry->jobPushStarted($job::class, $queue);
 
-        $serialized = JobSerializer::serialize($job);
-        $headers = $maxAttempts !== null ? [self::MAX_ATTEMPTS_HEADER => $maxAttempts] : [];
+        try {
+            $realQueue = $this->queueNamePrefix . $queue;
+            $this->ensureDeclared($realQueue);
 
-        if ($delaySeconds > 0) {
-            $delayQueue = $this->ensureDelayQueueDeclared($realQueue);
+            $serialized = JobSerializer::serialize($job);
+            $headers = $maxAttempts !== null ? [self::MAX_ATTEMPTS_HEADER => $maxAttempts] : [];
+            $metadata = $telemetry->jobPushMetadata($telemetryToken);
 
-            $this->channel()->publish(new Message(
-                body: json_encode($serialized, JSON_THROW_ON_ERROR),
-                headers: $headers,
-                deliveryMode: DeliveryMode::Persistent,
-                expiration: TimeSpan::fromSeconds($delaySeconds),
-            ), routingKey: $delayQueue);
+            if ($metadata !== []) {
+                $headers[self::METADATA_HEADER] = json_encode($metadata, JSON_THROW_ON_ERROR);
+            }
 
-            return;
+            if ($delaySeconds > 0) {
+                $delayQueue = $this->ensureDelayQueueDeclared($realQueue);
+
+                $this->channel()->publish(new Message(
+                    body: json_encode($serialized, JSON_THROW_ON_ERROR),
+                    headers: $headers,
+                    deliveryMode: DeliveryMode::Persistent,
+                    expiration: TimeSpan::fromSeconds($delaySeconds),
+                ), routingKey: $delayQueue);
+            } else {
+                $this->channel()->publish(new Message(
+                    body: json_encode($serialized, JSON_THROW_ON_ERROR),
+                    headers: $headers,
+                    deliveryMode: DeliveryMode::Persistent,
+                ), routingKey: $realQueue);
+            }
+
+            $telemetry->jobPushEnded($telemetryToken, null);
+        } catch (Throwable $e) {
+            $telemetry->jobPushEnded($telemetryToken, $e);
+
+            throw $e;
         }
-
-        $this->channel()->publish(new Message(
-            body: json_encode($serialized, JSON_THROW_ON_ERROR),
-            headers: $headers,
-            deliveryMode: DeliveryMode::Persistent,
-        ), routingKey: $realQueue);
     }
 
     #[\Override]
@@ -172,6 +190,10 @@ final class RabbitMqQueue implements QueueInterface
             $headers[self::MAX_ATTEMPTS_HEADER] = $job->maxAttempts;
         }
 
+        if ($job->metadata !== []) {
+            $headers[self::METADATA_HEADER] = json_encode($job->metadata, JSON_THROW_ON_ERROR);
+        }
+
         $this->channel()->publish(new Message(
             body: json_encode(['class' => $job->class, 'args' => $job->args], JSON_THROW_ON_ERROR),
             headers: $headers,
@@ -206,6 +228,11 @@ final class RabbitMqQueue implements QueueInterface
             ? (int) $delivery->message->headers[self::MAX_ATTEMPTS_HEADER]
             : null;
 
+        /** @var array<string, string> $metadata */
+        $metadata = isset($delivery->message->headers[self::METADATA_HEADER])
+            ? json_decode((string) $delivery->message->headers[self::METADATA_HEADER], true, flags: JSON_THROW_ON_ERROR)
+            : [];
+
         return new QueuedJob(
             $decoded['class'],
             $decoded['args'],
@@ -213,6 +240,7 @@ final class RabbitMqQueue implements QueueInterface
             queue: $queue,
             attempts: $completedAttempts + 1,
             maxAttempts: $maxAttempts,
+            metadata: $metadata,
         );
     }
 

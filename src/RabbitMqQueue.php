@@ -222,6 +222,55 @@ final class RabbitMqQueue implements QueueInterface
         return $job->handle;
     }
 
+    /**
+     * queueDeclare() returns the queue's current message count, so the
+     * declare this backend already performs on first touch doubles as
+     * the count — no separate management-API call. Delayed jobs live in
+     * the separate `{queue}.delay` queue and are counted with it, so a
+     * job waiting out its delay is outstanding here the same as on every
+     * other backend. The delay queue is declared (idempotently, with the
+     * exact arguments push() uses) rather than passively probed: a
+     * passive declare of a queue another process's delayed push created
+     * — the normal state for a stats command's own fresh process — would
+     * otherwise be the only way to see it, and a passive declare of a
+     * *missing* queue closes the channel as an AMQP error.
+     *
+     * Messages already delivered to a consumer and not yet acked are
+     * excluded by the broker's own count, matching the reserved/
+     * processing exclusion elsewhere.
+     */
+    #[\Override]
+    public function size(string $queue = 'default'): int
+    {
+        $name = $this->queueNamePrefix . $queue;
+        $this->ensureDeclared($name);
+        $delayQueue = $this->ensureDelayQueueDeclared($name);
+
+        return $this->channel()->queueDeclare($name, passive: true)->messages
+            + $this->channel()->queueDeclare($delayQueue, passive: true)->messages;
+    }
+
+    #[\Override]
+    public function clear(string $queue = 'default'): int
+    {
+        $name = $this->queueNamePrefix . $queue;
+
+        if ($name === '') {
+            return 0;
+        }
+
+        $size = $this->size($queue);
+
+        // size() above already declared both queues, so neither purge
+        // can hit AMQP's missing-queue channel error; the explicit
+        // ensure keeps that safety local instead of an ordering detail.
+        $delayQueue = $this->ensureDelayQueueDeclared($name);
+        $this->channel()->queuePurge($name);
+        $this->channel()->queuePurge($delayQueue);
+
+        return $size;
+    }
+
     private function channel(): Channel
     {
         return $this->channel ??= $this->client->channel();
@@ -237,6 +286,7 @@ final class RabbitMqQueue implements QueueInterface
         $this->declaredQueues[$queue] = true;
     }
 
+    /** @return non-empty-string */
     private function ensureDelayQueueDeclared(string $realQueue): string
     {
         $delayQueue = $realQueue . '.delay';

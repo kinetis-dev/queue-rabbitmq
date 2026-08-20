@@ -6,20 +6,16 @@ declare(strict_types=1);
  * Real-backend regression coverage for RabbitMqQueue — push/pop/ack/
  * release/fail, maxAttempts round-tripping through message headers
  * (including the no-maxAttempts case reading back null), priority-queue
- * fallthrough across two real queues, and a real (not just configured)
- * delay via the dead-letter-exchange mechanism — against a real RabbitMQ
- * broker.
- *
- * Deliberately its own standalone script, never wired to run in the same
- * process as anything else: RabbitMqQueue's own docblock discloses that
- * once its connection opens, Kinetis\Async\concurrently() can never be
- * called again anywhere in that process. A dedicated CI job (its own,
- * separate runner process) doesn't hit this at all — the limitation is
- * about sharing one process, not about RabbitMQ being reachable from CI.
+ * fallthrough across two real queues, a real (not just configured) delay
+ * via the dead-letter-exchange mechanism, and that
+ * Kinetis\Async\concurrently() still composes correctly once this
+ * connection is open — against a real RabbitMQ broker.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
 
+use function Kinetis\Async\concurrently;
+use Kinetis\Async\Timer;
 use Kinetis\Config\Config;
 use Kinetis\Queue\Job;
 use Kinetis\QueueRabbitMq\RabbitMqClientFactory;
@@ -110,5 +106,33 @@ $elapsed = microtime(true) - $start;
 check('the delayed job becomes visible after its delay elapses', $popped?->args['message'] === 'delayed');
 check('the delay was genuinely honored (>= 3s elapsed)', $elapsed >= 2.5);
 $queue->ack($popped);
+
+// --- concurrently() still works after this connection has opened ---
+//
+// This package's own docblocks previously disclosed a permanent
+// limitation here — ConcurrentBatch (the current concurrently()
+// implementation) parks on a targeted Revolt suspension resumed once
+// its own tasks finish, not the blanket EventLoop::run() the old
+// implementation used, so a still-open RabbitMQ channel's permanent
+// background reader no longer keeps concurrently() from ever
+// returning. A real regression check, not just a reasoning change: two
+// 50ms timer tasks through concurrently(), with $queue's connection
+// already open from every push()/pop() call above.
+$start = microtime(true);
+$results = concurrently([
+    static function (): int {
+        Timer::delay(0.05);
+
+        return 1;
+    },
+    static function (): int {
+        Timer::delay(0.05);
+
+        return 2;
+    },
+]);
+$elapsed = microtime(true) - $start;
+check('concurrently() still returns after this connection is open', $results === [1, 2]);
+check('it returned quickly, not hung on the still-open connection', $elapsed < 1.0);
 
 echo "ALL CHECKS PASSED\n";

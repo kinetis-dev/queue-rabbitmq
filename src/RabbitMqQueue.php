@@ -19,34 +19,20 @@ use function Amp\delay;
 use Throwable;
 
 /**
- * A hard, permanent limitation, not a someday: once any method on this
- * class has opened its underlying `Thesis\Amqp\Client` connection,
- * `Kinetis\Async\concurrently()` can never be called again anywhere in
- * that same OS process, for any reason, for as long as the connection
- * stays open — and nothing here ever closes it on its own. `Thesis\Amqp\Channel`
- * keeps a permanent background reader running for its whole lifetime
- * (AMQP is a push-capable protocol — heartbeats and deliveries can arrive
- * at any time, not just in response to a request), and `concurrently()`
- * waits for `Revolt\EventLoop::run()` to return on its own once nothing
- * is left to wait on — a condition that never becomes true while that
- * reader is still registered, even for a `concurrently()` call whose own
- * tasks never touch this queue at all.
- *
- * `QueueWorker::run()` itself never calls `concurrently()` around
- * pop()/ack()/release()/fail(), so this never bites the worker loop
- * itself directly — but a job's own handle() must not call concurrently()
- * either, for its own unrelated work, once any RabbitMqQueue instance in
- * that same process has opened a connection.
- *
- * The sharper risk is a persistent HTTP worker (FrankenPHP), not just a
- * queue worker: a single controller calling push() to enqueue a job opens
- * the connection in that worker process too, and a persistent worker
- * keeps running the same process across many unrelated requests. Every
- * later request that process happens to serve — regardless of whether it
- * touches this queue, or RabbitMQ, or a job at all — loses the ability to
- * call concurrently() from that point until the worker restarts. Calling
- * push()/pop() itself is never the problem; only a later concurrently()
- * call anywhere in that same process is.
+ * `Kinetis\Async\concurrently()` composes correctly with this class —
+ * confirmed directly against a real broker, not assumed: once its
+ * underlying `Thesis\Amqp\Client` connection opens, running two 50ms
+ * timer tasks through `concurrently()` still returns promptly rather
+ * than hanging. This was a real, previously-disclosed limitation under
+ * an earlier `concurrently()` implementation that waited on
+ * `Revolt\EventLoop::run()` returning — never true while
+ * `Thesis\Amqp\Channel`'s permanent background reader (AMQP is a
+ * push-capable protocol; heartbeats and deliveries can arrive at any
+ * time) stayed registered. The current implementation
+ * (`Kinetis\Async\ConcurrentBatch`) parks on a targeted Revolt
+ * suspension resumed once its own tasks finish, unaffected by any other
+ * still-registered watcher, so this queue's connection no longer
+ * interferes with `concurrently()` calls anywhere else in the process.
  *
  * A queue is declared durable on first use — by push(), pop(), or
  * release() on either side, whichever touches it first — and never

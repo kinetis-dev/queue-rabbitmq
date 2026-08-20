@@ -47,7 +47,7 @@ Both are scoped — `QUEUE_RABBITMQ_URL` + `events` →
 `QUEUE_EVENTS_RABBITMQ_URL`. `kinetis/queue`'s own keys
 (`QUEUE_CONNECTION`, `QUEUE_MAX_ATTEMPTS`, ...) are documented in that
 package; full reference:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 A queue name resolves directly to a RabbitMQ queue of that name, declared
 durable the first time anything touches it — nothing to create ahead of
@@ -86,7 +86,7 @@ composer require kinetis/queue-rabbitmq
 
 Requires PHP 8.4+, `kinetis/framework`, and `kinetis/queue`. Full
 documentation:
-[docs.kinetis.dev/queue-rabbitmq.html](https://docs.kinetis.dev/queue-rabbitmq.html).
+[kinetis.dev/docs/queue-rabbitmq.html](https://kinetis.dev/docs/queue-rabbitmq.html).
 
 ## License
 

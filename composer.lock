@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "1f19f3d093f6150636c3561f2f14a798",
+    "content-hash": "568b54600ec38fb3eac540e9469f6ef0",
     "packages": [
         {
             "name": "amphp/amp",
@@ -514,87 +514,6 @@
             "time": "2026-05-31T15:11:55+00:00"
         },
         {
-            "name": "amphp/redis",
-            "version": "v2.0.4",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/amphp/redis.git",
-                "reference": "964bcf6c2574645058371925a3668240a622bdab"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/amphp/redis/zipball/964bcf6c2574645058371925a3668240a622bdab",
-                "reference": "964bcf6c2574645058371925a3668240a622bdab",
-                "shasum": ""
-            },
-            "require": {
-                "amphp/amp": "^3",
-                "amphp/byte-stream": "^2",
-                "amphp/cache": "^2",
-                "amphp/parser": "^1",
-                "amphp/pipeline": "^1",
-                "amphp/serialization": "^1",
-                "amphp/socket": "^2",
-                "amphp/sync": "^2",
-                "league/uri": "^7",
-                "php": ">=8.1",
-                "psr/log": "^1|^2|^3",
-                "revolt/event-loop": "^1"
-            },
-            "require-dev": {
-                "amphp/php-cs-fixer-config": "^2",
-                "amphp/phpunit-util": "^3",
-                "amphp/process": "^2",
-                "phpunit/phpunit": "^9",
-                "psalm/phar": "5.22"
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "src/functions.php",
-                    "src/Internal/functions.php"
-                ],
-                "psr-4": {
-                    "Amp\\Redis\\": "src"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Niklas Keller",
-                    "email": "me@kelunik.com"
-                },
-                {
-                    "name": "Aaron Piotrowski",
-                    "email": "aaron@trowski.com"
-                }
-            ],
-            "description": "Efficient asynchronous communication with Redis servers, enabling scalable and responsive data storage and retrieval.",
-            "homepage": "https://amphp.org/redis",
-            "keywords": [
-                "amp",
-                "amphp",
-                "async",
-                "client",
-                "redis",
-                "revolt"
-            ],
-            "support": {
-                "issues": "https://github.com/amphp/redis/issues",
-                "source": "https://github.com/amphp/redis/tree/v2.0.4"
-            },
-            "funding": [
-                {
-                    "url": "https://github.com/amphp",
-                    "type": "github"
-                }
-            ],
-            "time": "2026-03-03T20:52:26+00:00"
-        },
-        {
             "name": "amphp/serialization",
             "version": "v1.1.0",
             "source": {
@@ -985,55 +904,6 @@
             "time": "2023-02-03T21:26:53+00:00"
         },
         {
-            "name": "kinetis/cache-redis",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "../cache-redis",
-                "reference": "c3d0a6fe0982fd846f8d6d9209596146d3b12a09"
-            },
-            "require": {
-                "amphp/amp": "^3.1.3",
-                "amphp/redis": "^2.0.4",
-                "amphp/serialization": "^1.1.0",
-                "amphp/socket": "^2.4.0",
-                "kinetis/framework": "dev-main",
-                "php": "^8.4"
-            },
-            "require-dev": {
-                "infection/infection": "^0.35.0",
-                "phpstan/phpstan": "^2.2.8",
-                "phpunit/phpunit": "^12.5.33",
-                "vimeo/psalm": "^6.16.1"
-            },
-            "type": "library",
-            "extra": {
-                "kinetis": []
-            },
-            "autoload": {
-                "psr-4": {
-                    "Kinetis\\SimpleCache\\": "src/"
-                }
-            },
-            "autoload-dev": {
-                "psr-4": {
-                    "Kinetis\\SimpleCache\\Tests\\": "tests/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Alon Noy"
-                }
-            ],
-            "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
-            "transport-options": {
-                "relative": true
-            }
-        },
-        {
             "name": "kinetis/framework",
             "version": "dev-main",
             "dist": {
@@ -1099,73 +969,15 @@
             }
         },
         {
-            "name": "kinetis/persistence",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "../persistence",
-                "reference": "f5f772c360f0e5c9acc51d70cd5cee370c89cc30"
-            },
-            "require": {
-                "kinetis/framework": "dev-main",
-                "php": "^8.4",
-                "revolt/event-loop": "^1.0.9"
-            },
-            "require-dev": {
-                "infection/infection": "^0.35.0",
-                "nyholm/psr7": "^1.8.2",
-                "phpstan/phpstan": "^2.2.8",
-                "phpunit/phpunit": "^12.5.33",
-                "vimeo/psalm": "^6.16.1"
-            },
-            "suggest": {
-                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
-                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
-                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
-                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto."
-            },
-            "type": "library",
-            "extra": {
-                "kinetis": {
-                    "bootstrap": "Kinetis\\Persistence\\PackageBootstrap"
-                }
-            },
-            "autoload": {
-                "psr-4": {
-                    "Kinetis\\Persistence\\": "src/"
-                }
-            },
-            "autoload-dev": {
-                "psr-4": {
-                    "Kinetis\\Persistence\\Tests\\": "tests/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Alon Noy"
-                }
-            ],
-            "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
-            "transport-options": {
-                "relative": true
-            }
-        },
-        {
             "name": "kinetis/queue",
             "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "05a0feeaf868cbff104a9779e202f254794b42e8"
+                "reference": "d40db8a8664e3cff00f1fbe91dac5734ca567851"
             },
             "require": {
-                "amphp/redis": "^2.0.4",
-                "kinetis/cache-redis": "dev-main",
                 "kinetis/framework": "dev-main",
-                "kinetis/persistence": "dev-main",
                 "php": "^8.4",
                 "psr/container": "^2.0.2",
                 "psr/log": "^3.0.2"
@@ -1204,7 +1016,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
+            "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
             "transport-options": {
                 "relative": true
             }
@@ -7989,9 +7801,7 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
-        "kinetis/cache-redis": 20,
         "kinetis/framework": 20,
-        "kinetis/persistence": 20,
         "kinetis/queue": 20
     },
     "prefer-stable": true,

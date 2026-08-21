@@ -18,8 +18,13 @@
 
 ---
 
-Adds RabbitMQ as a queue backend. `push()`/`pop()`/`ack()`/`release()`/`fail()`
-work exactly like any other backend — only your configuration changes.
+Adds RabbitMQ as a queue backend. `push()`/`pop()`/`ack()`/`fail()` work
+exactly like any other backend — only your configuration changes.
+`release()` does too, with one difference worth knowing: it's two
+separate AMQP operations rather than one atomic step, so a crash between
+them can redeliver a job twice. See
+[kinetis.dev/docs/queue-rabbitmq.html](https://kinetis.dev/docs/queue-rabbitmq.html#a-released-job-can-be-delivered-twice)
+for why, and what other backends don't share this.
 
 ```php
 use Kinetis\Config\Config;

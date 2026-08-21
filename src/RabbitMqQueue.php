@@ -55,6 +55,18 @@ use Throwable;
  * `QueuedJob::$handle` is the `Thesis\Amqp\DeliveryMessage` itself, opaque
  * to `QueueWorker` and passed straight back to ack()/release()/fail().
  *
+ * release() is two separate AMQP operations, not one — publish, then
+ * nack — because AMQP 0-9-1 has no cross-message transaction primitive
+ * to make them atomic. Publishing before nacking means a crash between
+ * the two never loses the job: the original delivery stays unacked and
+ * the broker redelivers it once the connection drops. It does mean a
+ * crash in that same window can leave both the redelivered original and
+ * the freshly published replacement in the queue at once — a real,
+ * open duplication window this ordering cannot close, unlike
+ * RedisQueue/SqlQueue's own release(), which is one atomic operation.
+ * A job handler that runs through this backend must tolerate being
+ * invoked more than once for the same logical job.
+ *
  * One channel per instance, opened lazily on first use and reused for
  * every publish/get/ack/nack afterward — the same one-client-per-worker
  * lifecycle RedisQueue/SqlQueue/SqsQueue already have.

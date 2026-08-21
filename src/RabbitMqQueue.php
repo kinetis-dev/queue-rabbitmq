@@ -23,16 +23,13 @@ use Throwable;
  * confirmed directly against a real broker, not assumed: once its
  * underlying `Thesis\Amqp\Client` connection opens, running two 50ms
  * timer tasks through `concurrently()` still returns promptly rather
- * than hanging. This was a real, previously-disclosed limitation under
- * an earlier `concurrently()` implementation that waited on
- * `Revolt\EventLoop::run()` returning — never true while
- * `Thesis\Amqp\Channel`'s permanent background reader (AMQP is a
- * push-capable protocol; heartbeats and deliveries can arrive at any
- * time) stayed registered. The current implementation
- * (`Kinetis\Async\ConcurrentBatch`) parks on a targeted Revolt
- * suspension resumed once its own tasks finish, unaffected by any other
- * still-registered watcher, so this queue's connection no longer
- * interferes with `concurrently()` calls anywhere else in the process.
+ * than hanging. `Kinetis\Async\ConcurrentBatch` parks on a targeted
+ * Revolt suspension resumed once its own tasks finish, unaffected by any
+ * other still-registered watcher — so this queue's connection, whose
+ * `Thesis\Amqp\Channel` keeps a permanent background reader registered
+ * (AMQP is a push-capable protocol; heartbeats and deliveries can arrive
+ * at any time), never interferes with `concurrently()` calls anywhere
+ * else in the process.
  *
  * A queue is declared durable on first use — by push(), pop(), or
  * release() on either side, whichever touches it first — and never

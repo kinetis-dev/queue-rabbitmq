@@ -54,30 +54,6 @@ durable the first time anything touches it — nothing to create ahead of
 time. Don't name a queue ending in `.delay`; that suffix is reserved for
 the internal queue delayed jobs route through.
 
-## Important: opening this connection disables `concurrently()` in that process
-
-Once anything calls `push()`/`pop()` for the first time, `Kinetis\Async\concurrently()`
-can't be called again anywhere in that same OS process, for any reason,
-for as long as the connection stays open — which is indefinitely, since
-nothing here closes it on its own. RabbitMQ keeps a connection open and
-listening at all times, and `concurrently()` waits for everything pending
-in the process to settle before it returns, which never happens while
-that connection stays open.
-
-This never affects the `kinetis queue:work` loop itself. It does
-affect two other things:
-
-- **A job's own `handle()`** reaching for `concurrently()` for its own
-  unrelated work, once any `RabbitMqQueue` in that process has opened a
-  connection.
-- **A persistent HTTP worker (FrankenPHP), not just a queue worker.** If a
-  controller calls `push()` to enqueue a job, that opens the connection in
-  the *request-handling* worker process too — and a persistent worker
-  keeps running that same process across many unrelated requests
-  afterward. Every later request that process happens to serve loses the
-  ability to call `concurrently()`, even if that request never touches
-  this queue at all, until the worker restarts.
-
 ## Installation
 
 ```sh

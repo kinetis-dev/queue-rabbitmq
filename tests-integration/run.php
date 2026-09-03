@@ -17,6 +17,8 @@ require __DIR__ . '/../vendor/autoload.php';
 use function Kinetis\Async\concurrently;
 use Kinetis\Async\Timer;
 use Kinetis\Config\Config;
+use Kinetis\Queue\Exception\InvalidPopTimeoutException;
+use Kinetis\Queue\Exception\InvalidQueueNameException;
 use Kinetis\Queue\Job;
 use Kinetis\QueueRabbitMq\RabbitMqClientFactory;
 use Kinetis\QueueRabbitMq\RabbitMqQueue;
@@ -106,6 +108,48 @@ $elapsed = microtime(true) - $start;
 check('the delayed job becomes visible after its delay elapses', $popped?->args['message'] === 'delayed');
 check('the delay was genuinely honored (>= 3s elapsed)', $elapsed >= 2.5);
 $queue->ack($popped);
+
+// --- immediate, non-blocking priority sweep ---
+//
+// basic.get is always immediate — there's no native blocking primitive
+// to accidentally over-commit to — and pop() delegates the whole
+// priority/timeout algorithm to the shared, tested PopSweep. This
+// confirms a job in the last of several genuinely empty higher-priority
+// queues is still found quickly, and every named queue gets declared (a
+// real AMQP operation) along the way.
+$start = microtime(true);
+$queue->push(new RabbitMqIntegrationTestJob('found-immediately'), queue: 'lowest');
+$found = $queue->pop(timeoutSeconds: 10, queues: ['empty-one', 'empty-two', 'empty-three', 'lowest']);
+$elapsed = microtime(true) - $start;
+check(
+    'a job in the last of four queues, the first three genuinely empty, is still found',
+    $found?->args['message'] === 'found-immediately',
+);
+check("found within a couple of real seconds, not the full 10s timeout — took {$elapsed}s", $elapsed < 3.0);
+$queue->ack($found);
+
+try {
+    $queue->pop(timeoutSeconds: -1);
+    check('a negative timeout is rejected', false);
+} catch (InvalidPopTimeoutException) {
+    check('a negative timeout is rejected', true);
+}
+
+try {
+    $queue->pop(queues: ['default', '']);
+    check('an empty queue name is rejected', false);
+} catch (InvalidQueueNameException) {
+    check('an empty queue name is rejected', true);
+}
+
+try {
+    $queue->pop(queues: ['default', 'high', 'default']);
+    check('a duplicate queue name is rejected', false);
+} catch (InvalidQueueNameException) {
+    check('a duplicate queue name is rejected', true);
+}
+
+check('an empty queue list returns null, not an error', $queue->pop(timeoutSeconds: 1, queues: []) === null);
 
 // --- concurrently() still works after this connection has opened ---
 //

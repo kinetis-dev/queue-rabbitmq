@@ -18,6 +18,10 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 Adds RabbitMQ as a queue backend. `push()`/`pop()`/`ack()`/`fail()` work
 exactly like any other backend — only your configuration changes.
 `release()` does too, with one difference worth knowing: it's two
@@ -49,7 +53,7 @@ QUEUE_RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 | `QUEUE_RABBITMQ_QUEUE_PREFIX` | — | Prepended to every queue name. |
 
 Both are scoped — `QUEUE_RABBITMQ_URL` + `events` →
-`QUEUE_EVENTS_RABBITMQ_URL`. `kinetis/queue`'s own keys
+`QUEUE_EVENTS_RABBITMQ_URL`. [`kinetis/queue`](https://github.com/kinetis-dev/queue)'s own keys
 (`QUEUE_CONNECTION`, `QUEUE_MAX_ATTEMPTS`, ...) are documented in that
 package; full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
@@ -65,7 +69,7 @@ the internal queue delayed jobs route through.
 composer require kinetis/queue-rabbitmq
 ```
 
-Requires PHP 8.4+, `kinetis/framework`, and `kinetis/queue`. Full
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/queue`](https://github.com/kinetis-dev/queue). Full
 documentation:
 [kinetis.dev/docs/queue-rabbitmq.html](https://kinetis.dev/docs/queue-rabbitmq.html).
 

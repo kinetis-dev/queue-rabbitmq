@@ -4,28 +4,34 @@ declare(strict_types=1);
 
 namespace Kinetis\QueueRabbitMq\Tests;
 
+use Amp\Future;
+use InvalidArgumentException;
 use Kinetis\Queue\Exception\InvalidDelaySecondsException;
 use Kinetis\Queue\Exception\InvalidMaxAttemptsException;
 use Kinetis\Queue\Exception\InvalidQueueNameException;
 use Kinetis\Queue\Exception\MalformedQueuedJobDataException;
 use Kinetis\Queue\Job;
+use Kinetis\QueueRabbitMq\DelayLadder;
+use Kinetis\QueueRabbitMq\Exception\PublishNotConfirmedException;
 use Kinetis\QueueRabbitMq\RabbitMqQueue;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 use Thesis\Amqp\Client;
 use Thesis\Amqp\Config as AmqpConfig;
+use Thesis\Amqp\PublishConfirmation;
+use Thesis\Amqp\PublishResult;
 
 /**
- * Queue-name validation only — RabbitMqQueue's own backend-specific
- * correctness (a real dead-letter-exchange delay, priority cycling, a
- * real ack/nack round trip) is deliberately never unit-tested against a
- * fake, matching this package's established "swap the storage, not the
- * whole system, and don't fake what a real backend has to prove"
- * discipline — real-backend verification lives in tests-integration/
- * against a real broker instead. This one check is pure PHP validation
- * that throws before the channel is ever touched, so a real broker has
- * nothing to prove that a fast unit test can't already prove faster.
+ * Argument validation, wire-format decoding, and the gate every publish
+ * passes through — the parts of RabbitMqQueue that are pure PHP and
+ * throw before, or independently of, any broker round trip. Backend
+ * correctness itself (a real delay actually elapsing, priority cycling,
+ * a real ack/nack round trip, release() leaving an unpublished job
+ * unacked) is never unit-tested against a fake, matching this package's
+ * established "swap the storage, not the whole system, and don't fake
+ * what a real backend has to prove" discipline — that verification lives
+ * in tests-integration/ against a real broker.
  *
  * Thesis\Amqp\Client's own constructor only builds its internal
  * connection/channel factories — confirmed by reading its source — and
@@ -81,6 +87,82 @@ final class RabbitMqQueueTest extends TestCase
 
         $this->expectException(InvalidMaxAttemptsException::class);
         $queue->push(new class implements Job {}, maxAttempts: -1);
+    }
+
+    /**
+     * The delay ceiling is checked in push() itself, alongside the shared
+     * QueueContract validation and before any I/O — the same shape
+     * SqsQueue's own 900-second cap takes, and for the same reason: a
+     * delay this backend cannot hold for as long as it was asked to is
+     * the caller's mistake to hear about, not something to publish and
+     * hope about.
+     */
+    public function test_push_rejects_a_delay_beyond_the_ladder_ceiling_before_ever_touching_the_channel(): void
+    {
+        $queue = $this->neverConnectedQueue();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage((string) DelayLadder::MAX_DELAY_SECONDS);
+        $queue->push(new class implements Job {}, delaySeconds: DelayLadder::MAX_DELAY_SECONDS + 1);
+    }
+
+    /**
+     * @return list<array{PublishResult}>
+     */
+    public static function unconfirmedResults(): array
+    {
+        return [
+            [PublishResult::Nacked],
+            [PublishResult::Unrouted],
+            [PublishResult::Canceled],
+            [PublishResult::Waiting],
+        ];
+    }
+
+    /**
+     * release() settles the original delivery on the statement after this
+     * check, so every publish outcome other than an acknowledgement has
+     * to throw here for the original to survive a publish that never
+     * landed. Thesis\Amqp\PublishConfirmation is constructible with an
+     * already-completed future, so each outcome is checked directly on
+     * the real type release() receives.
+     */
+    #[DataProvider('unconfirmedResults')]
+    public function test_an_unacknowledged_publish_is_never_treated_as_published(PublishResult $result): void
+    {
+        $assertConfirmed = new ReflectionMethod(RabbitMqQueue::class, 'assertConfirmed');
+
+        $this->expectException(PublishNotConfirmedException::class);
+        $this->expectExceptionMessage($result->name);
+        $assertConfirmed->invoke(null, self::confirmationOf($result), 'orders');
+    }
+
+    public function test_an_acknowledged_publish_passes(): void
+    {
+        $assertConfirmed = new ReflectionMethod(RabbitMqQueue::class, 'assertConfirmed');
+
+        $assertConfirmed->invoke(null, self::confirmationOf(PublishResult::Acked), 'orders');
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    /**
+     * Channel::publish() answers with no confirmation at all when its
+     * channel is not in confirm mode, which is a publish nothing can
+     * ever vouch for.
+     */
+    public function test_a_publish_with_no_confirmation_to_wait_on_is_never_treated_as_published(): void
+    {
+        $assertConfirmed = new ReflectionMethod(RabbitMqQueue::class, 'assertConfirmed');
+
+        $this->expectException(PublishNotConfirmedException::class);
+        $this->expectExceptionMessage('confirm mode');
+        $assertConfirmed->invoke(null, null, 'orders');
+    }
+
+    private static function confirmationOf(PublishResult $result): PublishConfirmation
+    {
+        return new PublishConfirmation(1, Future::complete($result), static function (): void {});
     }
 
     /**

@@ -30,6 +30,14 @@ them can redeliver a job twice. See
 [kinetis.dev/docs/queue-rabbitmq.html](https://kinetis.dev/docs/queue-rabbitmq.html#a-released-job-can-be-delivered-twice)
 for why, and what other backends don't share this.
 
+Delays are broker-driven and independent of each other: a job delayed by
+three seconds waits three seconds, not the hour an earlier delayed job on
+the same queue still has to go. A delay is a floor — the job is available
+no sooner than that, and the broker delivers it when it gets to it.
+Nothing beyond a stock RabbitMQ is needed — no plugin. Delays cap at
+4,194,303 seconds (about 48 days), the longest queue TTL the AMQP client
+can encode, and a longer one is rejected at `push()`.
+
 ```php
 use Kinetis\Config\Config;
 use Kinetis\QueueRabbitMq\RabbitMqClientFactory;
@@ -60,8 +68,9 @@ package; full reference:
 
 A queue name resolves directly to a RabbitMQ queue of that name, declared
 durable the first time anything touches it — nothing to create ahead of
-time. Don't name a queue ending in `.delay`; that suffix is reserved for
-the internal queue delayed jobs route through.
+time. Delayed jobs additionally use queues and exchanges named
+`{queue}.delay.{seconds}s`, declared the same way; a queue name can't
+contain a `.`, so none of them can collide with a queue of your own.
 
 ## Installation
 

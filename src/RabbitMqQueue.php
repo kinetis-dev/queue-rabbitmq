@@ -11,23 +11,26 @@ use Kinetis\Queue\QueueContract;
 use Kinetis\Queue\QueueInterface;
 use Kinetis\Queue\QueuedJob;
 use Kinetis\Queue\Support\PopSweep;
+use Kinetis\QueueRabbitMq\Exception\PublishNotConfirmedException;
 use Thesis\Amqp\Channel;
 use Thesis\Amqp\Client;
 use Thesis\Amqp\DeliveryMessage;
 use Thesis\Amqp\DeliveryMode;
 use Thesis\Amqp\Message;
-use Thesis\Time\TimeSpan;
+use Thesis\Amqp\PublishConfirmation;
+use Thesis\Amqp\PublishResult;
+use Thesis\Amqp\Queue as AmqpQueue;
 use function Amp\delay;
 use Throwable;
 
 /**
- * `Kinetis\Async\concurrently()` composes correctly with this class —
- * confirmed directly against a real broker, not assumed: once its
+ * `Kinetis\Async\concurrently()` composes correctly with this class, and
+ * a real-broker check in `tests-integration/` holds it there: once the
  * underlying `Thesis\Amqp\Client` connection opens, running two 50ms
- * timer tasks through `concurrently()` still returns promptly rather
- * than hanging. `Kinetis\Async\ConcurrentBatch` parks on a targeted
- * Revolt suspension resumed once its own tasks finish, unaffected by any
- * other still-registered watcher — so this queue's connection, whose
+ * timer tasks through `concurrently()` still returns promptly rather than
+ * hanging. `Kinetis\Async\ConcurrentBatch` parks on a targeted Revolt
+ * suspension resumed once its own tasks finish, unaffected by any other
+ * still-registered watcher — so this queue's connection, whose
  * `Thesis\Amqp\Channel` keeps a permanent background reader registered
  * (AMQP is a push-capable protocol; heartbeats and deliveries can arrive
  * at any time), never interferes with `concurrently()` calls anywhere
@@ -37,37 +40,43 @@ use Throwable;
  * release() on either side, whichever touches it first — and never
  * auto-created ahead of that, the same "real infrastructure resource,
  * provisioned as a side effect of normal operation, not implicitly ahead
- * of it" stance every other backend in this package takes.
+ * of it" stance every other backend in this package takes. A delayed
+ * push() declares the tiers its own delay uses, extending what this
+ * instance has declared already; size()/clear() declare every tier,
+ * since a message parked by any other process can be in any of them.
+ * DelayLadder is where that topology and its delay properties are
+ * described.
  *
- * AMQP 0-9-1 has no native per-message delay, so a delayed push() goes to
- * a second, dedicated "{queue}.delay" queue instead, configured with
- * `x-dead-letter-exchange`/`x-dead-letter-routing-key` pointing back at
- * the real queue and a per-message `expiration` equal to the requested
- * delay — RabbitMQ moves the message to the real queue itself once that
- * expiration elapses, no polling involved. A queue named literally
- * "{something}.delay" would collide with this convention; queue names
- * ending in `.delay` are reserved for it.
+ * Every publish this class makes is confirmed before it is treated as
+ * having happened. The channel runs in confirm mode, publishing is
+ * `mandatory`, and the broker's answer is awaited: `Channel::publish()`
+ * returning means the frames reached the socket, not that RabbitMQ
+ * accepted, routed, or durably recorded anything. release() is where that
+ * distinction decides whether a job can be lost — it publishes the
+ * replacement, waits for the acknowledgement, and only then discards the
+ * original delivery with `nack(requeue: false)`, so an unconfirmed
+ * publish throws `Exception\PublishNotConfirmedException` with the
+ * original still unacked and the broker free to redeliver it. Mandatory
+ * publishing turns an unroutable message into that same exception
+ * instead of a silent drop, at the cost of the `X-Thesis-Mandatory-Id`
+ * header `Thesis\Amqp` correlates a returned message by, which travels
+ * with the job.
  *
- * AMQP 0-9-1 also has no native attempt count — only a boolean
- * `redelivered` flag — so `attempts`/`maxAttempts` travel as message
- * headers instead, carried forward by release() republishing a fresh
- * message with an incremented `attempts` header before discarding the
- * original delivery (`nack(requeue: false)`), since nack's own `requeue`
- * flag redelivers the message unchanged and can't update its headers.
- * `QueuedJob::$handle` is the `Thesis\Amqp\DeliveryMessage` itself, opaque
- * to `QueueWorker` and passed straight back to ack()/release()/fail().
+ * The reverse window stays open and cannot be closed here: AMQP 0-9-1
+ * has no cross-message transaction, so a crash between a confirmed
+ * publish and the nack leaves both the redelivered original and the
+ * replacement in the queue, unlike RedisQueue's/SqlQueue's own
+ * single-operation release(). A job handler running through this backend
+ * must tolerate being invoked more than once for the same logical job.
  *
- * release() is two separate AMQP operations, not one — publish, then
- * nack — because AMQP 0-9-1 has no cross-message transaction primitive
- * to make them atomic. Publishing before nacking means a crash between
- * the two never loses the job: the original delivery stays unacked and
- * the broker redelivers it once the connection drops. It does mean a
- * crash in that same window can leave both the redelivered original and
- * the freshly published replacement in the queue at once — a real,
- * open duplication window this ordering cannot close, unlike
- * RedisQueue/SqlQueue's own release(), which is one atomic operation.
- * A job handler that runs through this backend must tolerate being
- * invoked more than once for the same logical job.
+ * AMQP 0-9-1 has no native attempt count — only a boolean `redelivered`
+ * flag — so `attempts`/`maxAttempts` travel as message headers instead,
+ * carried forward by release() republishing a fresh message with an
+ * incremented `attempts` header before discarding the original delivery,
+ * since nack's own `requeue` flag redelivers the message unchanged and
+ * can't update its headers. `QueuedJob::$handle` is the
+ * `Thesis\Amqp\DeliveryMessage` itself, opaque to `QueueWorker` and
+ * passed straight back to ack()/release()/fail().
  *
  * One channel per instance, opened lazily on first use and reused for
  * every publish/get/ack/nack afterward — the same one-client-per-worker
@@ -100,6 +109,14 @@ final class RabbitMqQueue implements QueueInterface
     /** @var array<string, true> */
     private array $declaredQueues = [];
 
+    /**
+     * The highest delay tier whose exchange and bindings this instance
+     * has already declared, per real queue name.
+     *
+     * @var array<string, int<0, DelayLadder::TOP_TIER>>
+     */
+    private array $declaredLadders = [];
+
     public function __construct(
         private readonly Client $client,
         private readonly string $queueNamePrefix = '',
@@ -111,13 +128,13 @@ final class RabbitMqQueue implements QueueInterface
     public function push(Job $job, int $delaySeconds = 0, string $queue = 'default', ?int $maxAttempts = null): void
     {
         QueueContract::assertValidPushArguments($delaySeconds, $queue, $maxAttempts);
+        DelayLadder::assertSupportedDelay($delaySeconds);
 
         $telemetry = Telemetry::global();
         $telemetryToken = $telemetry->jobPushStarted($job::class, $queue);
 
         try {
-            $realQueue = $this->queueNamePrefix . $queue;
-            $this->ensureDeclared($realQueue);
+            $realQueue = $this->realQueue($queue);
 
             $serialized = JobSerializer::serialize($job);
             $headers = $maxAttempts !== null ? [self::MAX_ATTEMPTS_HEADER => $maxAttempts] : [];
@@ -127,26 +144,29 @@ final class RabbitMqQueue implements QueueInterface
                 $headers[self::METADATA_HEADER] = json_encode($metadata, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
             }
 
-            // PRESERVE_ZERO_FRACTION, both branches: without it, an
-            // integral-valued float argument (4.0) encodes as "4" and
-            // decodes back as an int — a silent type change
-            // JobSerializer's own portable-value contract promises never
-            // happens.
-            if ($delaySeconds > 0) {
-                $delayQueue = $this->ensureDelayQueueDeclared($realQueue);
+            // PRESERVE_ZERO_FRACTION: without it, an integral-valued
+            // float argument (4.0) encodes as "4" and decodes back as an
+            // int — a silent type change JobSerializer's own
+            // portable-value contract promises never happens.
+            $message = new Message(
+                body: json_encode($serialized, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
+                headers: $headers,
+                deliveryMode: DeliveryMode::Persistent,
+            );
 
-                $this->channel()->publish(new Message(
-                    body: json_encode($serialized, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
-                    headers: $headers,
-                    deliveryMode: DeliveryMode::Persistent,
-                    expiration: TimeSpan::fromSeconds($delaySeconds),
-                ), routingKey: $delayQueue);
+            if ($delaySeconds > 0) {
+                $tier = DelayLadder::entryTier($delaySeconds);
+                $this->ensureLadderDeclared($realQueue, $tier);
+
+                $this->publishConfirmed(
+                    $message,
+                    exchange: DelayLadder::exchange($realQueue, $tier),
+                    routingKey: DelayLadder::routingKey($delaySeconds),
+                );
             } else {
-                $this->channel()->publish(new Message(
-                    body: json_encode($serialized, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
-                    headers: $headers,
-                    deliveryMode: DeliveryMode::Persistent,
-                ), routingKey: $realQueue);
+                $this->ensureDeclared($realQueue);
+
+                $this->publishConfirmed($message, exchange: '', routingKey: $realQueue);
             }
 
             $telemetry->jobPushEnded($telemetryToken, null);
@@ -182,10 +202,15 @@ final class RabbitMqQueue implements QueueInterface
         $this->deliveryOf($job)->ack();
     }
 
+    /**
+     * The replacement is published, confirmed by the broker, and only
+     * then is the original delivery discarded — see this class's own
+     * docblock for what each of those two steps protects against.
+     */
     #[\Override]
     public function release(QueuedJob $job): void
     {
-        $realQueue = $this->queueNamePrefix . $job->queue;
+        $realQueue = $this->realQueue($job->queue);
         $this->ensureDeclared($realQueue);
 
         $headers = [self::ATTEMPTS_HEADER => $job->attempts];
@@ -202,11 +227,15 @@ final class RabbitMqQueue implements QueueInterface
         // exact encoding once at push() time — re-encoding it the same
         // way here keeps a released job's own float values from
         // silently narrowing on a second pass through this codepath.
-        $this->channel()->publish(new Message(
-            body: json_encode(['class' => $job->class, 'args' => $job->args], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
-            headers: $headers,
-            deliveryMode: DeliveryMode::Persistent,
-        ), routingKey: $realQueue);
+        $this->publishConfirmed(
+            new Message(
+                body: json_encode(['class' => $job->class, 'args' => $job->args], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
+                headers: $headers,
+                deliveryMode: DeliveryMode::Persistent,
+            ),
+            exchange: '',
+            routingKey: $realQueue,
+        );
 
         $this->deliveryOf($job)->nack(requeue: false);
     }
@@ -219,7 +248,7 @@ final class RabbitMqQueue implements QueueInterface
 
     private function getFrom(string $queue): ?QueuedJob
     {
-        $realQueue = $this->queueNamePrefix . $queue;
+        $realQueue = $this->realQueue($queue);
         $this->ensureDeclared($realQueue);
 
         $delivery = $this->channel()->get($realQueue);
@@ -307,17 +336,20 @@ final class RabbitMqQueue implements QueueInterface
     }
 
     /**
-     * queueDeclare() returns the queue's current message count, so the
-     * declare this backend already performs on first touch doubles as
-     * the count — no separate management-API call. Delayed jobs live in
-     * the separate `{queue}.delay` queue and are counted with it, so a
-     * job waiting out its delay is outstanding here the same as on every
-     * other backend. The delay queue is declared (idempotently, with the
-     * exact arguments push() uses) rather than passively probed: a
-     * passive declare of a queue another process's delayed push created
-     * — the normal state for a stats command's own fresh process — would
-     * otherwise be the only way to see it, and a passive declare of a
-     * *missing* queue closes the channel as an AMQP error.
+     * queueDeclare() answers with the queue's current message count, so
+     * the declare this backend performs on first touch doubles as the
+     * count — no separate management-API call, and no passive declare,
+     * which would close the channel for a delay tier no process has
+     * created yet. A job waiting out its delay sits in one of those
+     * tiers and is outstanding here the same as on every other backend,
+     * so every tier is counted, whichever process parked the job in it.
+     *
+     * Each queue is its own read, with no snapshot across them, so a
+     * message dead-lettering while the reads run lands on either side of
+     * one: leaving tier 0 for the real queue, read last, it is counted
+     * twice, and dropping into a tier already read it is counted in
+     * neither. QueueInterface's own docblock says what the result is for
+     * — a monitoring signal, not a value to branch on.
      *
      * Messages already delivered to a consumer and not yet acked are
      * excluded by the broker's own count, matching the reserved/
@@ -326,69 +358,224 @@ final class RabbitMqQueue implements QueueInterface
     #[\Override]
     public function size(string $queue = 'default'): int
     {
-        QueueContract::assertValidQueueName($queue);
+        $name = $this->realQueue($queue);
+        $waiting = 0;
 
-        $name = $this->queueNamePrefix . $queue;
-        $this->ensureDeclared($name);
-        $delayQueue = $this->ensureDelayQueueDeclared($name);
+        foreach (DelayLadder::tiers() as $tier) {
+            $waiting += $this->declareTierQueue($name, $tier)->messages;
+        }
 
-        return $this->channel()->queueDeclare($name, passive: true)->messages
-            + $this->channel()->queueDeclare($delayQueue, passive: true)->messages;
+        return $waiting + $this->declareRealQueue($name)->messages;
     }
 
+    /**
+     * Purging runs from the top tier down and finishes with the real
+     * queue, the same direction a delayed message travels, so a message
+     * moving between tiers during the sweep lands in one not yet purged
+     * rather than behind it. The purges are still separate operations
+     * against a live broker: a message crossing between two of them, or
+     * a job pushed while the sweep runs, can outlive it. The returned
+     * count is what the broker reported removing.
+     */
     #[\Override]
     public function clear(string $queue = 'default'): int
     {
-        // size() below also validates $queue internally, but PHPStan
-        // can't see across that call to know $name (built from $queue
-        // right here) is provably non-empty for queuePurge()'s own
-        // non-empty-string parameter — asserting it directly in this
-        // scope too is what gives it that, not just runtime safety.
-        QueueContract::assertValidQueueName($queue);
+        $name = $this->realQueue($queue);
+        $removed = 0;
 
-        $size = $this->size($queue);
-        $name = $this->queueNamePrefix . $queue;
+        foreach (array_reverse(DelayLadder::tiers()) as $tier) {
+            $removed += $this->channel()->queuePurge($this->ensureTierQueueDeclared($name, $tier));
+        }
 
-        // size() above already declared both queues, so neither purge
-        // can hit AMQP's missing-queue channel error; the explicit
-        // ensure keeps that safety local instead of an ordering detail.
-        $delayQueue = $this->ensureDelayQueueDeclared($name);
-        $this->channel()->queuePurge($name);
-        $this->channel()->queuePurge($delayQueue);
+        $this->ensureDeclared($name);
 
-        return $size;
+        return $removed + $this->channel()->queuePurge($name);
     }
 
+    /**
+     * Confirm mode is armed once, with the channel itself, so every
+     * publish through it has an acknowledgement to wait for.
+     */
     private function channel(): Channel
     {
-        return $this->channel ??= $this->client->channel();
+        if ($this->channel !== null) {
+            return $this->channel;
+        }
+
+        $channel = $this->client->channel();
+        $channel->confirmSelect();
+
+        return $this->channel = $channel;
     }
 
+    /**
+     * @throws PublishNotConfirmedException
+     */
+    private function publishConfirmed(Message $message, string $exchange, string $routingKey): void
+    {
+        $confirmation = $this->channel()->publish(
+            $message,
+            exchange: $exchange,
+            routingKey: $routingKey,
+            mandatory: true,
+        );
+
+        self::assertConfirmed($confirmation, $exchange !== '' ? $exchange : $routingKey);
+    }
+
+    /**
+     * The one place a publish becomes a fact rather than a written
+     * frame. Every outcome other than an acknowledgement throws, so a
+     * caller's next statement — release()'s nack, in the case that
+     * matters — only runs against a message RabbitMQ has taken
+     * responsibility for.
+     *
+     * @throws PublishNotConfirmedException
+     */
+    private static function assertConfirmed(?PublishConfirmation $confirmation, string $target): void
+    {
+        if ($confirmation === null) {
+            throw PublishNotConfirmedException::unconfirmable($target);
+        }
+
+        $result = $confirmation->await();
+
+        if ($result !== PublishResult::Acked) {
+            throw PublishNotConfirmedException::answered($target, $result);
+        }
+    }
+
+    /**
+     * The broker-side name a logical queue maps to: a $queueNamePrefix
+     * validated at construction, and the name itself validated right
+     * here. Every broker call this result reaches wants a
+     * non-empty-string, and asserting in the scope that builds the name
+     * is what proves it one — PHPStan carries no caller's own validation
+     * across the concatenation. QueueContract's assertions are pure, so
+     * re-checking a name a public entry point has already validated
+     * costs nothing and keeps the proof local to the name it applies to.
+     *
+     * @return non-empty-string
+     */
+    private function realQueue(string $queue): string
+    {
+        QueueContract::assertValidQueueName($queue);
+
+        return $this->queueNamePrefix . $queue;
+    }
+
+    /**
+     * @param non-empty-string $queue
+     */
     private function ensureDeclared(string $queue): void
     {
         if (isset($this->declaredQueues[$queue])) {
             return;
         }
 
-        $this->channel()->queueDeclare($queue, durable: true);
-        $this->declaredQueues[$queue] = true;
+        $this->declareRealQueue($queue);
     }
 
-    /** @return non-empty-string */
-    private function ensureDelayQueueDeclared(string $realQueue): string
+    /**
+     * @param non-empty-string $queue
+     */
+    private function declareRealQueue(string $queue): AmqpQueue
     {
-        $delayQueue = $realQueue . '.delay';
+        $declared = $this->channel()->queueDeclare($queue, durable: true);
+        $this->declaredQueues[$queue] = true;
 
-        if (isset($this->declaredQueues[$delayQueue])) {
-            return $delayQueue;
+        return $declared;
+    }
+
+    /**
+     * Declares the delay tiers up to $upToTier, and the exchanges and
+     * bindings routing a message down through them — see DelayLadder for
+     * what that topology is and why. Tiers already declared by this
+     * instance are skipped, and a delay needing a higher tier than any
+     * before it extends the ladder upward from there.
+     *
+     * Declaring runs upward so that each tier's exchange is bound to one
+     * that already exists.
+     *
+     * @param non-empty-string $realQueue
+     * @param int<0, DelayLadder::TOP_TIER> $upToTier
+     */
+    private function ensureLadderDeclared(string $realQueue, int $upToTier): void
+    {
+        $this->ensureDeclared($realQueue);
+
+        $declaredUpTo = $this->declaredLadders[$realQueue] ?? -1;
+
+        if ($declaredUpTo >= $upToTier) {
+            return;
         }
 
-        $this->channel()->queueDeclare($delayQueue, durable: true, arguments: [
-            'x-dead-letter-exchange' => '',
-            'x-dead-letter-routing-key' => $realQueue,
-        ]);
-        $this->declaredQueues[$delayQueue] = true;
+        for ($tier = $declaredUpTo + 1; $tier <= $upToTier; ++$tier) {
+            $exchange = DelayLadder::exchange($realQueue, $tier);
+            $this->channel()->exchangeDeclare($exchange, 'topic', durable: true);
 
-        return $delayQueue;
+            $this->channel()->queueBind(
+                $this->ensureTierQueueDeclared($realQueue, $tier),
+                $exchange,
+                DelayLadder::bindingKey($tier, set: true),
+            );
+
+            $unsetBinding = DelayLadder::bindingKey($tier, set: false);
+
+            if ($tier === 0) {
+                $this->channel()->queueBind($realQueue, $exchange, $unsetBinding);
+            } else {
+                $this->channel()->exchangeBind(DelayLadder::exchange($realQueue, $tier - 1), $exchange, $unsetBinding);
+            }
+        }
+
+        $this->declaredLadders[$realQueue] = $upToTier;
+    }
+
+    /**
+     * @param non-empty-string $realQueue
+     * @param int<0, DelayLadder::TOP_TIER> $tier
+     * @return non-empty-string
+     */
+    private function ensureTierQueueDeclared(string $realQueue, int $tier): string
+    {
+        $name = DelayLadder::queue($realQueue, $tier);
+
+        if (isset($this->declaredQueues[$name])) {
+            return $name;
+        }
+
+        $this->declareTierQueue($realQueue, $tier);
+
+        return $name;
+    }
+
+    /**
+     * A tier holds a message for its own whole TTL and then hands it to
+     * the tier below — or, from tier 0, straight back to the real queue
+     * over the default exchange, which is the one hop no exchange of this
+     * ladder can route, since the bit it would ask about is the one the
+     * message has just finished paying.
+     *
+     * @param non-empty-string $realQueue
+     * @param int<0, DelayLadder::TOP_TIER> $tier
+     */
+    private function declareTierQueue(string $realQueue, int $tier): AmqpQueue
+    {
+        $name = DelayLadder::queue($realQueue, $tier);
+
+        $arguments = ['x-message-ttl' => DelayLadder::ttlMilliseconds($tier)];
+
+        if ($tier === 0) {
+            $arguments['x-dead-letter-exchange'] = '';
+            $arguments['x-dead-letter-routing-key'] = $realQueue;
+        } else {
+            $arguments['x-dead-letter-exchange'] = DelayLadder::exchange($realQueue, $tier - 1);
+        }
+
+        $declared = $this->channel()->queueDeclare($name, durable: true, arguments: $arguments);
+        $this->declaredQueues[$name] = true;
+
+        return $declared;
     }
 }

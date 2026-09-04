@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\QueueRabbitMq;
 
 use Kinetis\Instrumentation\Telemetry;
+use Kinetis\Queue\ClearableQueueInterface;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\JobSerializer;
 use Kinetis\Queue\QueueContract;
-use Kinetis\Queue\QueueInterface;
 use Kinetis\Queue\QueuedJob;
 use Kinetis\Queue\Support\PopSweep;
 use Kinetis\QueueRabbitMq\Exception\PublishNotConfirmedException;
@@ -76,7 +76,12 @@ use Throwable;
  * since nack's own `requeue` flag redelivers the message unchanged and
  * can't update its headers. `QueuedJob::$handle` is the
  * `Thesis\Amqp\DeliveryMessage` itself, opaque to `QueueWorker` and
- * passed straight back to ack()/release()/fail().
+ * passed straight back to ack()/release()/fail(). A delivery tag is
+ * scoped to the channel that produced it and the broker answers a
+ * second settlement of one with a channel-level error, so this backend
+ * raises no Kinetis\Queue\Exception\StaleJobHandleException of its own
+ * — see QueuedJob's docblock for the delivery-receipt contract that
+ * exception belongs to.
  *
  * One channel per instance, opened lazily on first use and reused for
  * every publish/get/ack/nack afterward — the same one-client-per-worker
@@ -94,7 +99,7 @@ use Throwable;
  * multiple environments sharing one broker don't collide on plain queue
  * names.
  */
-final class RabbitMqQueue implements QueueInterface
+final class RabbitMqQueue implements ClearableQueueInterface
 {
     private const string ATTEMPTS_HEADER = 'attempts';
 

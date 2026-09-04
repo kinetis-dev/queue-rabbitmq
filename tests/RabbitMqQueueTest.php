@@ -6,6 +6,7 @@ namespace Kinetis\QueueRabbitMq\Tests;
 
 use Amp\Future;
 use InvalidArgumentException;
+use Kinetis\Queue\ClearableQueueInterface;
 use Kinetis\Queue\Exception\InvalidDelaySecondsException;
 use Kinetis\Queue\Exception\InvalidMaxAttemptsException;
 use Kinetis\Queue\Exception\InvalidQueueNameException;
@@ -316,5 +317,25 @@ final class RabbitMqQueueTest extends TestCase
             '{"class":"Fixture\\\\Job","args":[]}',
             ['metadata' => '["not","a","map"]'],
         );
+    }
+
+    public function test_the_backend_is_usable_through_the_clear_capability_type(): void
+    {
+        $queue = $this->neverConnectedQueue();
+
+        self::assertInstanceOf(ClearableQueueInterface::class, $queue);
+
+        // Called through the capability type, not the concrete class: a
+        // backend that stopped declaring ClearableQueueInterface fails
+        // here as a TypeError instead of passing quietly. The queue-name
+        // check still throws before the channel is touched.
+        $this->expectException(InvalidQueueNameException::class);
+        self::clearThrough($queue, '');
+    }
+
+    /** Typed as the capability, which is the whole point of the test above. */
+    private static function clearThrough(ClearableQueueInterface $queue, string $name): int
+    {
+        return $queue->clear($name);
     }
 }

@@ -48,6 +48,19 @@ $queue = new RabbitMqQueue(RabbitMqClientFactory::fromConfig($config));
 $queue->push(new SendWelcomeEmail($email, $name), queue: 'default');
 ```
 
+`RabbitMqQueue` declares `Kinetis\Queue\ClearableQueueInterface`,
+purging the queue and every delay tier and reporting the total the
+broker says it removed. `queue.purge` leaves messages already delivered
+to a consumer and not yet acked in place — the broker's own rule, which
+happens to be exactly the contract's.
+
+A delivery tag is scoped to its channel, and reusing one is a
+channel-level protocol error rather than an answer this package can read
+back, so it raises no
+`Kinetis\Queue\Exception\StaleJobHandleException`. An unacked delivery
+is requeued as soon as the connection drops, so a worker that dies
+mid-job has its work redelivered and handlers have to be idempotent.
+
 ## Configuration
 
 ```

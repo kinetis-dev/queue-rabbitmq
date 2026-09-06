@@ -7,64 +7,47 @@ namespace Kinetis\QueueRabbitMq;
 use InvalidArgumentException;
 
 /**
- * The topology a delayed push() travels through, and the pure arithmetic
+ * The topology a delayed push() travels through, and the arithmetic
  * deciding which part of it a given delay uses.
  *
- * AMQP 0-9-1 has no per-message delay. RabbitMQ can hold a message for a
- * while and then move it somewhere else — a queue's TTL plus
- * `x-dead-letter-exchange` do exactly that — but one TTL applies to a
- * whole queue, and a queue expires its messages from the head. A single
- * holding queue carrying a per-message `expiration` therefore holds a
- * message long past its own delay: one asking for an hour, sitting at
- * the head, keeps a message behind it asking for three seconds waiting
- * the full hour. Uniform per-queue TTL removes that, because FIFO order
- * and expiry order are then the same order — whatever entered first also
- * comes due first, and nothing behind it can be due sooner.
+ * AMQP 0-9-1 has no per-message delay. A queue's TTL plus
+ * `x-dead-letter-exchange` hold a message and then move it on, but one
+ * TTL applies to the whole queue and a queue expires from the head, so a
+ * single holding queue carrying per-message `expiration` values holds a
+ * message long past its own delay: one asking for an hour, sitting at the
+ * head, keeps a three-second message behind it waiting the full hour.
  *
  * So a delay is spent across a ladder of holding queues, tier $i holding
- * a message for 2^$i seconds. A delay is the binary sum of the tiers it
- * sets: 3600 seconds is tiers 11, 10, 9 and 4 (2048 + 1024 + 512 + 16),
- * visiting four queues whose TTLs add up to the requested delay. Every
- * message in a tier owes the same wait, so none of them can be held up
- * by one owing longer.
+ * a message for 2^$i seconds, and a delay is the binary sum of the tiers
+ * it sets — 3600 seconds visits tiers 11, 10, 9 and 4. Every message in a
+ * tier owes the same wait, so FIFO order and expiry order are the same
+ * order and nothing can be held up by a message owing longer.
  *
- * A TTL is a floor, not a schedule. It says when the broker may move a
- * message on, so a job is available no sooner than its delay; expiry
- * work, each hop's own routing, and whatever else the broker has to do
- * can put it later. What the ladder buys is the independence — a short
- * delay pushed behind a long one waits its own wait rather than the
- * long one's — not delivery at a wall-clock instant.
+ * A TTL is a floor, not a schedule: a job is available no sooner than its
+ * delay, and expiry work and routing can put it later. What the ladder
+ * buys is independence between delays, not delivery at a wall-clock
+ * instant.
  *
- * Routing between tiers is the broker's own work, with nothing polling
- * and no process holding state between hops. The delay's bit pattern
- * travels as the routing key — TIER_COUNT words of `0`/`1`, most
- * significant first — and each tier owns one topic exchange asking a
- * single question about it: is bit $i set? A set bit binds to that
- * tier's holding queue, which dead-letters into the next exchange down
- * (tier 0 dead-letters to the real queue itself); a clear bit binds
- * straight to the next exchange down, an exchange-to-exchange binding the
- * message passes through without being queued. Dead-lettering preserves
- * the routing key, so the same bit pattern answers every tier's question
- * on the way down. A message enters at the exchange of its highest set
- * bit and leaves from tier 0's dead-letter route, so it only ever moves
- * toward lower tiers and can never re-enter one it has left.
+ * Routing between tiers is the broker's work — nothing polls, and no
+ * process holds state between hops. The delay's bit pattern travels as
+ * the routing key (TIER_COUNT words of `0`/`1`, most significant first),
+ * and each tier owns one topic exchange asking whether bit $i is set. A
+ * set bit binds to that tier's holding queue, which dead-letters into the
+ * next exchange down (tier 0 into the real queue); a clear bit binds
+ * straight to the next exchange down. Dead-lettering preserves the
+ * routing key, so the same pattern answers every tier's question, and a
+ * message only ever moves toward lower tiers.
  *
- * MAX_DELAY_SECONDS is the whole ladder spent at once, and TOP_TIER sets
- * it: `Thesis\Amqp` encodes every integer in an AMQP field table as a
- * signed 32-bit value, and a tier's `x-message-ttl` is one of those
- * integers — RabbitMQ holds a message for whatever millisecond figure
- * reaches it. So the largest TTL a tier can carry is 2^31 - 1
- * milliseconds, and 2^21 seconds is the largest whole power of two
- * fitting under it. A tier of 2^22 seconds would go out as a negative
- * TTL, so push() rejects a longer delay itself, naming the ceiling,
- * rather than publishing a message the ladder cannot hold as long as it
- * was asked to. The ceiling is what this client's encoding can express,
- * not a delay limit RabbitMQ itself sets — the broker's own `x-message-ttl`
- * takes an unsigned 32-bit millisecond value, one tier further up.
+ * TOP_TIER sets MAX_DELAY_SECONDS: `Thesis\Amqp` encodes a field-table
+ * integer as signed 32-bit, and a tier's `x-message-ttl` is one of those,
+ * so the largest TTL a tier can carry is 2^31 - 1 milliseconds and 2^21
+ * seconds is the largest whole power of two under it. push() rejects a
+ * longer delay, naming the ceiling, rather than publishing a message the
+ * ladder cannot hold as long as asked. The ceiling is this client's
+ * encoding, not a RabbitMQ limit.
  *
- * A ladder name can never collide with a real queue: `QueueContract`'s
- * queue-name grammar allows no `.` at all, in either a queue name or a
- * `$queueNamePrefix`, and every name here carries one.
+ * A ladder name can never collide with a real queue: QueueContract's
+ * name grammar allows no `.`, and every name here carries one.
  *
  * @internal RabbitMqQueue's own topology. Nothing outside this package
  *     should name these queues, exchanges or tiers; the delay contract a

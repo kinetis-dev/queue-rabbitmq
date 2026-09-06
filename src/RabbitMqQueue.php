@@ -10,7 +10,6 @@ use Kinetis\Queue\Job;
 use Kinetis\Queue\JobSerializer;
 use Kinetis\Queue\QueueContract;
 use Kinetis\Queue\QueuedJob;
-use Kinetis\Queue\Support\PopSweep;
 use Kinetis\QueueRabbitMq\Exception\PublishNotConfirmedException;
 use Thesis\Amqp\Channel;
 use Thesis\Amqp\Client;
@@ -26,78 +25,66 @@ use Throwable;
 /**
  * `Kinetis\Async\concurrently()` composes correctly with this class, and
  * a real-broker check in `tests-integration/` holds it there: once the
- * underlying `Thesis\Amqp\Client` connection opens, running two 50ms
- * timer tasks through `concurrently()` still returns promptly rather than
- * hanging. `Kinetis\Async\ConcurrentBatch` parks on a targeted Revolt
- * suspension resumed once its own tasks finish, unaffected by any other
- * still-registered watcher — so this queue's connection, whose
- * `Thesis\Amqp\Channel` keeps a permanent background reader registered
- * (AMQP is a push-capable protocol; heartbeats and deliveries can arrive
- * at any time), never interferes with `concurrently()` calls anywhere
- * else in the process.
+ * `Thesis\Amqp\Client` connection opens, two 50ms timer tasks through
+ * `concurrently()` still return promptly. `Kinetis\Async\ConcurrentBatch`
+ * parks on a targeted Revolt suspension resumed by its own tasks,
+ * unaffected by any other registered watcher — and this connection's
+ * channel keeps a permanent background reader registered, since AMQP is
+ * push-capable and heartbeats or deliveries can arrive at any time.
  *
- * A queue is declared durable on first use — by push(), pop(), or
- * release() on either side, whichever touches it first — and never
- * auto-created ahead of that, the same "real infrastructure resource,
- * provisioned as a side effect of normal operation, not implicitly ahead
- * of it" stance every other backend in this package takes. A delayed
- * push() declares the tiers its own delay uses, extending what this
- * instance has declared already; size()/clear() declare every tier,
- * since a message parked by any other process can be in any of them.
- * DelayLadder is where that topology and its delay properties are
- * described.
+ * A queue is declared durable on first use — by push(), pop() or
+ * release(), whichever touches it first — and never provisioned ahead of
+ * that, the same stance every other backend here takes. A delayed push()
+ * declares the tiers its own delay uses; size()/clear() declare every
+ * tier, since a message parked by another process can be in any of them.
+ * DelayLadder owns that topology and its delay properties.
  *
- * Every publish this class makes is confirmed before it is treated as
- * having happened. The channel runs in confirm mode, publishing is
- * `mandatory`, and the broker's answer is awaited: `Channel::publish()`
- * returning means the frames reached the socket, not that RabbitMQ
- * accepted, routed, or durably recorded anything. release() is where that
- * distinction decides whether a job can be lost — it publishes the
- * replacement, waits for the acknowledgement, and only then discards the
- * original delivery with `nack(requeue: false)`, so an unconfirmed
- * publish throws `Exception\PublishNotConfirmedException` with the
- * original still unacked and the broker free to redeliver it. Mandatory
- * publishing turns an unroutable message into that same exception
- * instead of a silent drop, at the cost of the `X-Thesis-Mandatory-Id`
- * header `Thesis\Amqp` correlates a returned message by, which travels
- * with the job.
+ * **Every publish is confirmed before it counts as having happened.**
+ * The channel runs in confirm mode, publishing is `mandatory`, and the
+ * broker's answer is awaited: `Channel::publish()` returning means the
+ * frames reached the socket, not that RabbitMQ accepted, routed or
+ * durably recorded anything. release() is where that decides whether a
+ * job can be lost — it publishes the replacement, waits for the
+ * acknowledgement, and only then discards the original with
+ * `nack(requeue: false)`, so an unconfirmed publish raises
+ * Exception\PublishNotConfirmedException with the original still unacked
+ * and the broker free to redeliver it. Mandatory publishing turns an
+ * unroutable message into that same exception rather than a silent drop,
+ * at the cost of the `X-Thesis-Mandatory-Id` header `Thesis\Amqp`
+ * correlates a returned message by, which travels with the job.
  *
- * The reverse window stays open and cannot be closed here: AMQP 0-9-1
- * has no cross-message transaction, so a crash between a confirmed
- * publish and the nack leaves both the redelivered original and the
- * replacement in the queue, unlike RedisQueue's/SqlQueue's own
- * single-operation release(). A job handler running through this backend
- * must tolerate being invoked more than once for the same logical job.
+ * The reverse window cannot be closed here: AMQP 0-9-1 has no
+ * cross-message transaction, so a crash between a confirmed publish and
+ * the nack leaves both the redelivered original and the replacement in
+ * the queue, unlike RedisQueue's and SqlQueue's single-operation
+ * release(). A handler running through this backend must tolerate being
+ * invoked more than once for the same logical job.
  *
- * AMQP 0-9-1 has no native attempt count — only a boolean `redelivered`
- * flag — so `attempts`/`maxAttempts` travel as message headers instead,
- * carried forward by release() republishing a fresh message with an
- * incremented `attempts` header before discarding the original delivery,
- * since nack's own `requeue` flag redelivers the message unchanged and
- * can't update its headers. `QueuedJob::$handle` is the
- * `Thesis\Amqp\DeliveryMessage` itself, opaque to `QueueWorker` and
- * passed straight back to ack()/release()/fail(). A delivery tag is
- * scoped to the channel that produced it and the broker answers a
- * second settlement of one with a channel-level error, so this backend
- * raises no Kinetis\Queue\Exception\StaleJobHandleException of its own
- * — see QueuedJob's docblock for the delivery-receipt contract that
- * exception belongs to.
+ * AMQP 0-9-1 has no native attempt count, only a boolean `redelivered`
+ * flag, so `attempts`/`maxAttempts` travel as message headers — carried
+ * forward by release() republishing with an incremented `attempts`
+ * header, since nack's `requeue` flag redelivers a message unchanged and
+ * cannot update its headers.
  *
- * One channel per instance, opened lazily on first use and reused for
- * every publish/get/ack/nack afterward — the same one-client-per-worker
- * lifecycle RedisQueue/SqlQueue/SqsQueue already have.
+ * **Settlements here are unfenced.** QueuedJob::$handle is the
+ * `Thesis\Amqp\DeliveryMessage` itself, opaque to QueueWorker. A
+ * delivery tag is scoped to the channel that produced it and the broker
+ * answers a second settlement with a channel-level error, so this
+ * backend raises no Exception\StaleJobHandleException of its own.
  *
- * pop()'s whole priority/timeout algorithm is Kinetis\Queue\Support\PopSweep
- * — see that class and QueueInterface's own docblock for the full
- * cross-backend contract. This backend has no native blocking-wait-with-
- * timeout primitive at all (AMQP 0-9-1's basic.get is always a single,
- * immediate, non-blocking request per queue), so it runs PopSweep with
- * probeCanBlock: false — every probe is instant regardless of the wait
- * budget it's offered, and pacing between full sweeps is entirely
- * PopSweep's own bounded sleep() between them. $queueNamePrefix
- * lets "high"/"default" map to e.g. "myapp-high"/"myapp-default" so
- * multiple environments sharing one broker don't collide on plain queue
- * names.
+ * One channel per instance, opened lazily and reused for every
+ * publish/get/ack/nack — the same one-client-per-worker lifecycle the
+ * other backends have.
+ *
+ * pop() sweeps every queue in priority order with basic.get, which is
+ * always an immediate, non-blocking request, then suspends through
+ * Revolt for up to a second before sweeping again, less when less of
+ * the deadline remains. AMQP 0-9-1 offers no blocking-wait-with-timeout
+ * primitive, so that paced sweep is what bounds an idle pop() — see
+ * QueueInterface for the contract it meets.
+ *
+ * $queueNamePrefix maps "high"/"default" onto "myapp-high"/"myapp-default"
+ * so environments sharing one broker do not collide.
  */
 final class RabbitMqQueue implements ClearableQueueInterface
 {
@@ -185,20 +172,42 @@ final class RabbitMqQueue implements ClearableQueueInterface
     #[\Override]
     public function pop(int $timeoutSeconds = 0, array $queues = ['default']): ?QueuedJob
     {
-        // PopSweep::run() itself validates $timeoutSeconds/$queues via
-        // QueueContract before touching either — see that class's own
-        // docblock for why it doesn't trust a caller to have already
-        // done so.
-        return PopSweep::run(
-            timeoutSeconds: $timeoutSeconds,
-            queues: $queues,
-            probe: fn (string $queue): ?QueuedJob => $this->getFrom($queue),
-            probeCanBlock: false,
-            waitCapSeconds: self::POLL_INTERVAL_SECONDS,
-            sleep: static function (float $seconds): void {
-                delay($seconds);
-            },
-        );
+        QueueContract::assertValidPopArguments($timeoutSeconds, $queues);
+
+        if ($queues === []) {
+            return null;
+        }
+
+        $deadline = $timeoutSeconds > 0 ? microtime(true) + $timeoutSeconds : null;
+
+        while (true) {
+            foreach ($queues as $queue) {
+                $job = $this->getFrom($queue);
+
+                if ($job !== null) {
+                    return $job;
+                }
+            }
+
+            // basic.get never blocks, so pacing between sweeps is what
+            // keeps an idle pop() off the broker. delay() suspends the
+            // calling Fiber through Revolt rather than blocking the loop,
+            // and the pause is cut short by whatever is left of the
+            // deadline so pop() does not overshoot it.
+            $pause = self::POLL_INTERVAL_SECONDS;
+
+            if ($deadline !== null) {
+                $remaining = $deadline - microtime(true);
+
+                if ($remaining <= 0.0) {
+                    return null;
+                }
+
+                $pause = min($pause, $remaining);
+            }
+
+            delay($pause);
+        }
     }
 
     #[\Override]
@@ -275,53 +284,37 @@ final class RabbitMqQueue implements ClearableQueueInterface
     }
 
     /**
-     * Extracted out of getFrom() and taking the raw body/headers directly
-     * rather than the whole DeliveryMessage — independently testable with
-     * a hand-built headers array, no real broker round trip needed. Every
-     * field is read through one of QueueContract's own coercion helpers
-     * rather than trusted at a PHPStan-asserted @var shape — $body might
-     * not even be valid JSON, or might decode to something other than a
-     * {class, args} object, and the attempts/maxAttempts headers are read
-     * through QueueContract::coerceStoredCompletedAttempts()/
-     * coerceStoredInteger() rather than a lossy `(int)` cast: AMQP field
-     * tables can carry a typed integer (the normal case, for a header
-     * this class itself wrote) but a non-Kinetis publisher, or a
-     * hand-edited one, could set either header to anything. The attempts
-     * header specifically goes through coerceStoredCompletedAttempts(),
-     * not coerceStoredMaxAttempts() (used for maxAttempts just below) —
-     * this stored value is the completed-attempts count (0-indexed) that
-     * gets a real `+ 1` below, and that method is what keeps a stored
-     * PHP_INT_MAX from silently overflowing that addition into a float,
-     * and also rejects a negative stored count outright. Its own absence
-     * (no header at all) is deliberately not treated as malformed —
-     * push() never sets this header at all, only release() does, so a
-     * message on its genuine first attempt has none, and the `?? 0`
-     * default below reads that correctly as "zero completed attempts so
-     * far." maxAttempts, unlike RedisQueue's own field, is only ever
-     * conditionally written by push() too (never for a null $maxAttempts
-     * argument — see that method), so its absence is equally never a
-     * sign of corruption, and coerceStoredMaxAttempts() already treats a
-     * null $raw as "no override" directly, with no presence check
-     * needed on top. Every failure here is caught by getFrom() — see
-     * QueueContract::settleIfMalformed() — so a malformed delivery
-     * settles the already-reserved delivery rather than crashing the
-     * worker.
+     * Takes the raw body and headers rather than a DeliveryMessage, so it
+     * is testable against a hand-built header array with no broker.
+     *
+     * Every field goes through a QueueContract decode helper: a
+     * non-Kinetis publisher can put anything in an AMQP field table, and
+     * a `(int)` cast would read a non-numeric header as 0. A missing
+     * attempts header is not corruption — push() never writes one, only
+     * release() does, so a first delivery has none and `?? 0` reads that
+     * as zero completed attempts. maxAttempts is likewise only written
+     * when push() got a non-null value. The PHP_INT_MAX - 1 ceiling keeps
+     * the `+ 1` below from overflowing into a float.
      *
      * @param array<string, mixed> $headers
      */
     private static function buildQueuedJob(string $queue, mixed $handle, string $body, array $headers): QueuedJob
     {
-        $decoded = QueueContract::coerceStoredJsonArray($body, 'body');
+        $decoded = QueueContract::storedJsonArray($body, 'body');
 
-        $class = QueueContract::coerceStoredClass($decoded['class'] ?? null);
-        $args = QueueContract::coerceStoredArgs($decoded['args'] ?? null);
+        $class = QueueContract::storedClass($decoded['class'] ?? null);
+        $args = QueueContract::storedArgs($decoded['args'] ?? null);
 
         $rawAttempts = $headers[self::ATTEMPTS_HEADER] ?? 0;
-        $completedAttempts = QueueContract::coerceStoredCompletedAttempts($rawAttempts, self::ATTEMPTS_HEADER);
+        $completedAttempts = QueueContract::storedInt($rawAttempts, self::ATTEMPTS_HEADER, 0, PHP_INT_MAX - 1);
 
-        $maxAttempts = QueueContract::coerceStoredMaxAttempts($headers[self::MAX_ATTEMPTS_HEADER] ?? null, self::MAX_ATTEMPTS_HEADER);
+        $maxAttempts = QueueContract::storedNullableInt(
+            $headers[self::MAX_ATTEMPTS_HEADER] ?? null,
+            self::MAX_ATTEMPTS_HEADER,
+            0,
+        );
 
-        $metadata = QueueContract::coerceStoredMetadata($headers[self::METADATA_HEADER] ?? null);
+        $metadata = QueueContract::storedMetadata($headers[self::METADATA_HEADER] ?? null);
 
         return new QueuedJob(
             $class,

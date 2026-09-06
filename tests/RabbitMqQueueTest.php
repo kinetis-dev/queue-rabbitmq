@@ -6,10 +6,8 @@ namespace Kinetis\QueueRabbitMq\Tests;
 
 use Amp\Future;
 use InvalidArgumentException;
+use Kinetis\Queue\Exception\InvalidQueueArgumentException;
 use Kinetis\Queue\ClearableQueueInterface;
-use Kinetis\Queue\Exception\InvalidDelaySecondsException;
-use Kinetis\Queue\Exception\InvalidMaxAttemptsException;
-use Kinetis\Queue\Exception\InvalidQueueNameException;
 use Kinetis\Queue\Exception\MalformedQueuedJobDataException;
 use Kinetis\Queue\Job;
 use Kinetis\QueueRabbitMq\DelayLadder;
@@ -54,7 +52,7 @@ final class RabbitMqQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->size('');
     }
 
@@ -62,7 +60,7 @@ final class RabbitMqQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->size('has spaces');
     }
 
@@ -70,7 +68,7 @@ final class RabbitMqQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->clear('');
     }
 
@@ -78,7 +76,7 @@ final class RabbitMqQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidDelaySecondsException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->push(new class implements Job {}, delaySeconds: -1);
     }
 
@@ -86,7 +84,7 @@ final class RabbitMqQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidMaxAttemptsException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->push(new class implements Job {}, maxAttempts: -1);
     }
 
@@ -171,8 +169,8 @@ final class RabbitMqQueueTest extends TestCase
      * is actually caught — proven directly with a hand-built headers
      * array (no real broker round trip needed, since this method was
      * extracted specifically to make that possible), so the wiring
-     * between it and QueueContract::coerceStoredInteger() is exercised
-     * too, not just coerceStoredInteger()'s own unit-level behavior.
+     * between it and QueueContract::storedInt() is exercised
+     * too, not just storedInt()'s own unit-level behavior.
      */
     public function test_build_queued_job_rejects_a_non_numeric_stored_attempts_header(): void
     {
@@ -205,23 +203,18 @@ final class RabbitMqQueueTest extends TestCase
     }
 
     /**
-     * The reviewer's own reported overflow gap, at the real decode level:
-     * a stored completed-attempts count of exactly PHP_INT_MAX is
-     * syntactically a perfectly valid integer — coerceStoredInteger()
-     * alone would accept it — but buildQueuedJob()'s own `+ 1` would
-     * silently overflow it to a float, which would then fail QueuedJob's
-     * strictly-typed constructor with a confusing TypeError. This proves
-     * the real, wired decode path rejects it cleanly instead, via
-     * QueueContract::coerceStoredCompletedAttempts() — as the native
-     * typed int form a real AMQP field table (the header shape this
-     * class itself writes) actually carries.
+     * A stored completed-attempts count of exactly PHP_INT_MAX is a
+     * valid integer, but buildQueuedJob()'s `+ 1` would overflow it to a
+     * float and fail QueuedJob's typed constructor with a TypeError. The
+     * decode path rejects it as corrupted storage instead — in the
+     * native int form an AMQP field table carries.
      */
     public function test_build_queued_job_rejects_a_stored_attempts_header_of_php_int_max(): void
     {
         $buildQueuedJob = new ReflectionMethod(RabbitMqQueue::class, 'buildQueuedJob');
 
         $this->expectException(MalformedQueuedJobDataException::class);
-        $this->expectExceptionMessage('PHP_INT_MAX');
+        $this->expectExceptionMessage('out of bounds');
         $buildQueuedJob->invoke(
             null,
             'default',
@@ -329,7 +322,7 @@ final class RabbitMqQueueTest extends TestCase
         // backend that stopped declaring ClearableQueueInterface fails
         // here as a TypeError instead of passing quietly. The queue-name
         // check still throws before the channel is touched.
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         self::clearThrough($queue, '');
     }
 

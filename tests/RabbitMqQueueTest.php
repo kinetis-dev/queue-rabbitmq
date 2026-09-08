@@ -225,6 +225,103 @@ final class RabbitMqQueueTest extends TestCase
     }
 
     /**
+     * The accepted edges of the attempts header, as the delivery counts
+     * that come back out of them: zero completed attempts is the first
+     * delivery, and PHP_INT_MAX - 1 is the largest count whose `+ 1` is
+     * still an integer.
+     *
+     * @return list<array{int, int}>
+     */
+    public static function acceptedStoredAttempts(): array
+    {
+        return [
+            'no attempt completed yet' => [0, 1],
+            'the last count that still increments to an integer' => [PHP_INT_MAX - 1, PHP_INT_MAX],
+        ];
+    }
+
+    #[DataProvider('acceptedStoredAttempts')]
+    public function test_build_queued_job_accepts_the_stored_attempts_bounds(int $stored, int $attempts): void
+    {
+        $buildQueuedJob = new ReflectionMethod(RabbitMqQueue::class, 'buildQueuedJob');
+
+        $job = $buildQueuedJob->invoke(
+            null,
+            'default',
+            'opaque-handle',
+            '{"class":"Fixture\\\\Job","args":[]}',
+            ['attempts' => $stored],
+        );
+
+        self::assertSame($attempts, $job->attempts);
+    }
+
+    /**
+     * A negative stored count is corrupted storage, caught here rather
+     * than one line later by QueuedJob's own 1-indexed floor: the
+     * settle-and-remove path is what a malformed delivery needs, not an
+     * ordinary job-execution failure.
+     */
+    public function test_build_queued_job_rejects_a_negative_stored_attempts_header(): void
+    {
+        $buildQueuedJob = new ReflectionMethod(RabbitMqQueue::class, 'buildQueuedJob');
+
+        $this->expectException(MalformedQueuedJobDataException::class);
+        $this->expectExceptionMessage('out of bounds');
+        $buildQueuedJob->invoke(
+            null,
+            'default',
+            'opaque-handle',
+            '{"class":"Fixture\\\\Job","args":[]}',
+            ['attempts' => -1],
+        );
+    }
+
+    /**
+     * Zero is a maxAttempts push() accepts and writes, so the decoder
+     * carries it back as the stored override it is — distinct from the
+     * absent header, which leaves the processing worker's own default in
+     * charge.
+     */
+    public function test_build_queued_job_accepts_a_stored_max_attempts_of_zero(): void
+    {
+        $buildQueuedJob = new ReflectionMethod(RabbitMqQueue::class, 'buildQueuedJob');
+
+        $stored = $buildQueuedJob->invoke(
+            null,
+            'default',
+            'opaque-handle',
+            '{"class":"Fixture\\\\Job","args":[]}',
+            ['maxAttempts' => 0],
+        );
+        $absent = $buildQueuedJob->invoke(
+            null,
+            'default',
+            'opaque-handle',
+            '{"class":"Fixture\\\\Job","args":[]}',
+            [],
+        );
+
+        self::assertSame(0, $stored->maxAttempts);
+        self::assertNull($absent->maxAttempts);
+    }
+
+    public function test_build_queued_job_rejects_a_negative_stored_max_attempts_header(): void
+    {
+        $buildQueuedJob = new ReflectionMethod(RabbitMqQueue::class, 'buildQueuedJob');
+
+        $this->expectException(MalformedQueuedJobDataException::class);
+        $this->expectExceptionMessage('out of bounds');
+        $buildQueuedJob->invoke(
+            null,
+            'default',
+            'opaque-handle',
+            '{"class":"Fixture\\\\Job","args":[]}',
+            ['maxAttempts' => -1],
+        );
+    }
+
+    /**
      * @return list<array{mixed}>
      */
     public static function malformedAttemptsHeaders(): array

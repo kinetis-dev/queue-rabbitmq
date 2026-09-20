@@ -35,9 +35,10 @@ use Throwable;
  * A queue is declared durable on first use — by push(), pop() or
  * release(), whichever touches it first — and never provisioned ahead of
  * that, the same stance every other backend here takes. A delayed push()
- * declares the tiers its own delay uses; size()/clear() declare every
- * tier, since a message parked by another process can be in any of them.
- * DelayLadder owns that topology and its delay properties.
+ * or release() declares the tiers its own delay uses; size()/clear()
+ * declare every tier, since a message parked by another process can be
+ * in any of them. DelayLadder owns that topology and its delay
+ * properties.
  *
  * **Every publish is confirmed before it counts as having happened.**
  * The channel runs in confirm mode, publishing is `mandatory`, and the
@@ -146,20 +147,7 @@ final class RabbitMqQueue implements ClearableQueueInterface
                 deliveryMode: DeliveryMode::Persistent,
             );
 
-            if ($delaySeconds > 0) {
-                $tier = DelayLadder::entryTier($delaySeconds);
-                $this->ensureLadderDeclared($realQueue, $tier);
-
-                $this->publishConfirmed(
-                    $message,
-                    exchange: DelayLadder::exchange($realQueue, $tier),
-                    routingKey: DelayLadder::routingKey($delaySeconds),
-                );
-            } else {
-                $this->ensureDeclared($realQueue);
-
-                $this->publishConfirmed($message, exchange: '', routingKey: $realQueue);
-            }
+            $this->publishWithDelay($message, $realQueue, $delaySeconds);
 
             $telemetry->jobPushEnded($telemetryToken, null);
         } catch (Throwable $e) {
@@ -220,12 +208,22 @@ final class RabbitMqQueue implements ClearableQueueInterface
      * The replacement is published, confirmed by the broker, and only
      * then is the original delivery discarded — see this class's own
      * docblock for what each of those two steps protects against.
+     *
+     * $delaySeconds sends that replacement through the same delay ladder
+     * a delayed push() uses, by the same publishWithDelay() call, so a
+     * retry waits on broker-side TTL and dead-lettering with nothing held
+     * in this process. The order and its duplicate window are an
+     * undelayed release's: the ladder publication is confirmed before
+     * the original is discarded, so a failure to confirm leaves the
+     * original unacked and redeliverable rather than losing the job.
      */
     #[\Override]
-    public function release(QueuedJob $job): void
+    public function release(QueuedJob $job, int $delaySeconds = 0): void
     {
+        QueueContract::assertValidReleaseDelay($delaySeconds);
+        DelayLadder::assertSupportedDelay($delaySeconds);
+
         $realQueue = $this->realQueue($job->queue);
-        $this->ensureDeclared($realQueue);
 
         $headers = [self::ATTEMPTS_HEADER => $job->attempts];
 
@@ -241,14 +239,14 @@ final class RabbitMqQueue implements ClearableQueueInterface
         // exact encoding once at push() time — re-encoding it the same
         // way here keeps a released job's own float values from
         // silently narrowing on a second pass through this codepath.
-        $this->publishConfirmed(
+        $this->publishWithDelay(
             new Message(
                 body: json_encode(['class' => $job->class, 'args' => $job->args], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION),
                 headers: $headers,
                 deliveryMode: DeliveryMode::Persistent,
             ),
-            exchange: '',
-            routingKey: $realQueue,
+            $realQueue,
+            $delaySeconds,
         );
 
         $this->deliveryOf($job)->nack(requeue: false);
@@ -404,6 +402,43 @@ final class RabbitMqQueue implements ClearableQueueInterface
         $channel->confirmSelect();
 
         return $this->channel = $channel;
+    }
+
+    /**
+     * The one publication path push() and release() share: a message due
+     * now goes onto the real queue over the default exchange, and a
+     * delayed one enters the ladder at the tier its highest set bit names
+     * — declaring whatever topology that hop needs first. Factored out so
+     * a retry's delay travels the exact route a delayed enqueue does,
+     * rather than through a second implementation that could diverge from
+     * it.
+     *
+     * The caller validates $delaySeconds against
+     * DelayLadder::assertSupportedDelay() before any I/O; entryTier() and
+     * routingKey() re-check it locally, since both are meaningless past
+     * the ladder's top tier.
+     *
+     * @param non-empty-string $realQueue
+     * @throws PublishNotConfirmedException
+     */
+    private function publishWithDelay(Message $message, string $realQueue, int $delaySeconds): void
+    {
+        if ($delaySeconds > 0) {
+            $tier = DelayLadder::entryTier($delaySeconds);
+            $this->ensureLadderDeclared($realQueue, $tier);
+
+            $this->publishConfirmed(
+                $message,
+                exchange: DelayLadder::exchange($realQueue, $tier),
+                routingKey: DelayLadder::routingKey($delaySeconds),
+            );
+
+            return;
+        }
+
+        $this->ensureDeclared($realQueue);
+
+        $this->publishConfirmed($message, exchange: '', routingKey: $realQueue);
     }
 
     /**

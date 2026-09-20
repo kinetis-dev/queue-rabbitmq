@@ -10,6 +10,7 @@ use Kinetis\Queue\Exception\InvalidQueueArgumentException;
 use Kinetis\Queue\ClearableQueueInterface;
 use Kinetis\Queue\Exception\MalformedQueuedJobDataException;
 use Kinetis\Queue\Job;
+use Kinetis\Queue\QueuedJob;
 use Kinetis\QueueRabbitMq\DelayLadder;
 use Kinetis\QueueRabbitMq\Exception\PublishNotConfirmedException;
 use Kinetis\QueueRabbitMq\RabbitMqQueue;
@@ -103,6 +104,42 @@ final class RabbitMqQueueTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage((string) DelayLadder::MAX_DELAY_SECONDS);
         $queue->push(new class implements Job {}, delaySeconds: DelayLadder::MAX_DELAY_SECONDS + 1);
+    }
+
+    public function test_release_rejects_a_negative_delay_before_ever_touching_the_channel(): void
+    {
+        $queue = $this->neverConnectedQueue();
+
+        $this->expectException(InvalidQueueArgumentException::class);
+        $queue->release(self::delivery(), -1);
+    }
+
+    /**
+     * release() carries the ladder ceiling push() does, and checks it in
+     * the same place: before any I/O. The gate is what this proves —
+     * reaching the broker at all would raise a connection failure from
+     * this unreachable client instead, so an InvalidArgumentException
+     * here can only have come from ahead of it.
+     */
+    public function test_release_rejects_a_delay_beyond_the_ladder_ceiling_before_ever_touching_the_channel(): void
+    {
+        $queue = $this->neverConnectedQueue();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage((string) DelayLadder::MAX_DELAY_SECONDS);
+        $queue->release(self::delivery(), DelayLadder::MAX_DELAY_SECONDS + 1);
+    }
+
+    /**
+     * A delivery a settlement can be driven against. $handle is never
+     * reached by the checks above, which is the point: both throw before
+     * the broker, and so before anything reads it.
+     */
+    private static function delivery(): QueuedJob
+    {
+        $job = new class implements Job {};
+
+        return new QueuedJob($job::class, [], handle: null, queue: 'default', attempts: 1);
     }
 
     /**

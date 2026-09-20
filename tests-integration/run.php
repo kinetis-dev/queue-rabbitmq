@@ -89,6 +89,24 @@ check('release() carries maxAttempts forward', $popped?->maxAttempts === 5);
 check('release() carries the job data forward', $popped?->args['message'] === 'retry-me');
 $queue->ack($popped);
 
+// --- a delayed release travels the same delay ladder a delayed push does ---
+//
+// Three seconds is binary 11, so the replacement enters at tier 1 and
+// dead-letters through tier 0 before reaching the real queue. Only a
+// real broker proves the TTL/dead-letter hops actually hold it, and that
+// the replacement is routed into the ladder rather than published
+// straight back onto the queue.
+
+$queue->push(new RabbitMqIntegrationTestJob('back-off'), maxAttempts: 5);
+$popped = $queue->pop(timeoutSeconds: 5);
+$queue->release($popped, 3);
+check('a delayed release is held by the ladder while the delay runs', $queue->pop(timeoutSeconds: 1) === null);
+
+$popped = $queue->pop(timeoutSeconds: 15);
+check('the delayed job reaches the real queue once its delay has run', $popped?->args['message'] === 'back-off');
+check('the delayed retry still carries its incremented attempt', $popped?->attempts === 2);
+$queue->ack($popped);
+
 // --- priority cycling across two real queues ---
 
 $queue->push(new RabbitMqIntegrationTestJob('low-priority'), queue: 'default');

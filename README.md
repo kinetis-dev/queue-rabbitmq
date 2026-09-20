@@ -34,9 +34,12 @@ Delays are broker-driven and independent of each other: a job delayed by
 three seconds waits three seconds, not the hour an earlier delayed job on
 the same queue still has to go. A delay is a floor — the job is available
 no sooner than that, and the broker delivers it when it gets to it.
-Nothing beyond a stock RabbitMQ is needed — no plugin. Delays cap at
-4,194,303 seconds (about 48 days), the longest queue TTL the AMQP client
-can encode, and a longer one is rejected at `push()`.
+Nothing beyond a stock RabbitMQ is needed — no plugin. A delayed retry
+travels the same ladder: `release()` publishes its replacement into it
+rather than onto the real queue, still confirmed before the original
+delivery is discarded. Delays cap at 4,194,303 seconds (about 48 days),
+the longest queue TTL the AMQP client can encode, and a longer one is
+rejected by `push()` and `release()` alike before anything is sent.
 
 ```php
 use Kinetis\Config\Config;

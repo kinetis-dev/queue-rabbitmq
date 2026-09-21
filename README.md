@@ -43,13 +43,21 @@ rejected by `push()` and `release()` alike before anything is sent.
 
 ```php
 use Kinetis\Config\Config;
-use Kinetis\QueueRabbitMq\RabbitMqClientFactory;
-use Kinetis\QueueRabbitMq\RabbitMqQueue;
+use Kinetis\QueueRabbitMq\RabbitMqQueueFactory;
 
-$queue = new RabbitMqQueue(RabbitMqClientFactory::fromConfig($config));
+$queue = RabbitMqQueueFactory::fromConfig($config);
 
 $queue->push(new SendWelcomeEmail($email, $name), queue: 'default');
 ```
+
+The factory builds the queue's own `Thesis\Amqp\Client` and hands the
+queue that client's `disconnect()`, so `RabbitMqQueue` declares
+`Kinetis\Queue\DisposableQueueInterface` and `dispose()` closes the
+channel and the connection when the worker ends. Building one yourself
+means registering that — `$app->onDispose($queue->dispose(...))`; the
+bootstrap behind `QUEUE_CONNECTION=rabbitmq` already does. A
+`RabbitMqQueue` constructed directly around a client you built
+disconnects nothing: that client stays yours.
 
 `RabbitMqQueue` declares `Kinetis\Queue\ClearableQueueInterface`,
 purging the queue and every delay tier and reporting the total the
@@ -81,6 +89,10 @@ Both are scoped — `QUEUE_RABBITMQ_URL` + `events` →
 (`QUEUE_CONNECTION`, `QUEUE_MAX_ATTEMPTS`, ...) are documented in that
 package; full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
+
+The URI's username, password and vhost are percent-decoded, so
+`amqp://guest:p%40ssword@rabbit:5672/%2Fstaging` authenticates as `guest`
+with the password `p@ssword` against the vhost `/staging`.
 
 A queue name resolves directly to a RabbitMQ queue of that name, declared
 durable the first time anything touches it — nothing to create ahead of

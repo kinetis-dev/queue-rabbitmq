@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\QueueRabbitMq;
 
 use Kinetis\Instrumentation\Telemetry;
+use Closure;
 use Kinetis\Queue\ClearableQueueInterface;
+use Kinetis\Queue\DisposableQueueInterface;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\JobSerializer;
 use Kinetis\Queue\QueueContract;
@@ -87,7 +89,7 @@ use Throwable;
  * $queueNamePrefix maps "high"/"default" onto "myapp-high"/"myapp-default"
  * so environments sharing one broker do not collide.
  */
-final class RabbitMqQueue implements ClearableQueueInterface
+final class RabbitMqQueue implements ClearableQueueInterface, DisposableQueueInterface
 {
     private const string ATTEMPTS_HEADER = 'attempts';
 
@@ -110,9 +112,20 @@ final class RabbitMqQueue implements ClearableQueueInterface
      */
     private array $declaredLadders = [];
 
+    /**
+     * $client is the caller's and stays the caller's to disconnect:
+     * $disposer is null here, so dispose() releases nothing. A caller
+     * handing this queue a client of its own passes
+     * `$client->disconnect(...)` to make the queue own it, which is
+     * what {@see RabbitMqQueueFactory::fromConfig()} does for the
+     * client it builds.
+     *
+     * @param ?Closure(): void $disposer
+     */
     public function __construct(
         private readonly Client $client,
         private readonly string $queueNamePrefix = '',
+        private ?Closure $disposer = null,
     ) {
         QueueContract::assertValidQueueNamePrefix($queueNamePrefix);
     }
@@ -386,6 +399,20 @@ final class RabbitMqQueue implements ClearableQueueInterface
         $this->ensureDeclared($name);
 
         return $removed + $this->channel()->queuePurge($name);
+    }
+
+    /**
+     * Disconnects the client this queue owns, if it was given one to
+     * own — closing its channel factory, this instance's own channel
+     * with it, and the connection. The disposer is dropped as it runs,
+     * so a second call releases nothing a second time.
+     */
+    #[\Override]
+    public function dispose(): void
+    {
+        $disposer = $this->disposer;
+        $this->disposer = null;
+        $disposer?->__invoke();
     }
 
     /**

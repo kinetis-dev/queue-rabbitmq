@@ -106,7 +106,7 @@ contain a `.`, so none of them can collide with a queue of your own.
 composer require kinetis/queue-rabbitmq
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/queue`](https://github.com/kinetis-dev/queue). Full
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/queue`](https://github.com/kinetis-dev/queue). Full
 documentation:
 [kinetis.dev/docs/queue-rabbitmq.html](https://kinetis.dev/docs/queue-rabbitmq.html).
 

@@ -9,7 +9,7 @@
         }
     ],
     "require": {
-        "php": "^8.4",
+        "php": ">=8.4 <8.6",
         "kinetis/framework": "dev-main",
         "kinetis/queue": "dev-main",
         "amphp/amp": "^3.1.3",
